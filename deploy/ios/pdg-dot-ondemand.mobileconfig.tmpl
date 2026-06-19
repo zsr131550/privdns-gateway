@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PrivDNS Gateway — iOS/iPadOS DoT 描述文件 (带 OnDemand + 双卡 probe)。
+  通用于单卡/双卡: probe 探到「只有内网卡能收到响应」的端点时才启用 DoT。
+
+  生成真文件时替换:
+    __DOT_HOST__  = DoT 主机名 (= 证书 SAN, 本项目为 gkgj.abrdns.com)
+    __JP_IP__     = JP 公网 IP (DoT 服务器, 本项目 177.0.142.153)
+    __UUID1__ __UUID2__ = 两个 uuidgen
+
+  前置 (要配 iOS 时在 JP 上做一次):
+    1) 开一个探测端点: HTTP :81, GET /probe 返回 204;
+    2) 防火墙只放行 172.22.0.0/16 → :81, 其余拒绝/丢弃
+       (这样普通卡探不通、内网卡探得通, 实现双卡区分)。
+
+  关键: OnDemandRules 与 DNSSettings 平级 (不要嵌进 DNSSettings); WiFi 规则排在 Cellular 之前。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>    <string>com.apple.dnsSettings.managed</string>
+      <key>PayloadVersion</key> <integer>1</integer>
+      <key>PayloadIdentifier</key> <string>com.privdns.gateway.dot.__UUID1__</string>
+      <key>PayloadUUID</key>    <string>__UUID1__</string>
+      <key>PayloadDisplayName</key> <string>PrivDNS Gateway (DoT)</string>
+
+      <key>DNSSettings</key>
+      <dict>
+        <key>DNSProtocol</key>     <string>TLS</string>
+        <key>ServerName</key>      <string>__DOT_HOST__</string>
+        <key>ServerAddresses</key> <array><string>__JP_IP__</string></array>
+      </dict>
+
+      <!-- OnDemand 与 DNSSettings 平级 -->
+      <key>OnDemandRules</key>
+      <array>
+        <dict>
+          <key>InterfaceTypeMatch</key><string>WiFi</string>
+          <key>Action</key><string>Disconnect</string>
+        </dict>
+        <dict>
+          <key>InterfaceTypeMatch</key><string>Cellular</string>
+          <key>Action</key><string>Connect</string>
+          <key>URLStringProbe</key><string>http://__JP_IP__:81/probe</string>
+        </dict>
+        <dict>
+          <key>Action</key><string>Disconnect</string>
+        </dict>
+      </array>
+    </dict>
+  </array>
+  <key>PayloadDisplayName</key> <string>PrivDNS Gateway</string>
+  <key>PayloadIdentifier</key>  <string>com.privdns.gateway.__UUID2__</string>
+  <key>PayloadUUID</key>        <string>__UUID2__</string>
+  <key>PayloadType</key>        <string>Configuration</string>
+  <key>PayloadVersion</key>     <integer>1</integer>
+</dict>
+</plist>
