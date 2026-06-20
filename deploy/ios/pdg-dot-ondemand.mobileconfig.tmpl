@@ -3,14 +3,14 @@
   PrivDNS Gateway — iOS/iPadOS DoT 描述文件 (带 OnDemand + 双卡 probe)。
   通用于单卡/双卡: probe 探到「只有内网卡能收到响应」的端点时才启用 DoT。
 
-  生成真文件时替换:
-    __DOT_HOST__  = DoT 主机名 (= 证书 SAN, 本项目为 gkgj.abrdns.com)
-    __JP_IP__     = JP 公网 IP (DoT 服务器, 本项目 177.0.142.153)
+  生成真文件时替换 (bot 的「📱 iOS 描述文件」会自动填):
+    __DOT_HOST__  = DoT 主机名 (= 证书 SAN, 如 dot.example.com)
+    __JP_IP__     = 网关公网 IP (DoT 服务器, 如 203.0.113.10)
     __UUID1__ __UUID2__ = 两个 uuidgen
 
-  前置 (要配 iOS 时在 JP 上做一次):
+  前置 (要配 iOS 时在网关上做一次, install.sh / pdg-probe81 已自动配好):
     1) 开一个探测端点: HTTP :81, GET /probe 返回 204;
-    2) 防火墙只放行 172.22.0.0/16 → :81, 其余拒绝/丢弃
+    2) 防火墙只放行 内网卡来源段 → :81, 其余拒绝/丢弃
        (这样普通卡探不通、内网卡探得通, 实现双卡区分)。
 
   关键: OnDemandRules 与 DNSSettings 平级 (不要嵌进 DNSSettings); WiFi 规则排在 Cellular 之前。

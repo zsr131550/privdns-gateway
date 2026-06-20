@@ -24,7 +24,8 @@ MOSDNS_DIRECT = "/etc/mosdns/rules/custom_direct.txt"
 RS_META = "/opt/pdg-bot/rulesets.json"
 UPDATE_SCRIPT = "/opt/pdg-bot/update-rules.sh"
 IOS_TMPL = "/opt/pdg-bot/pdg-dot.mobileconfig.tmpl"
-CERT = "/etc/dnsdist/certs/fullchain.pem"
+CERT = os.environ.get("PDG_CERT", "/etc/mosdns/certs/fullchain.pem")
+CERT_DIR = os.path.dirname(CERT)
 CLASH = "http://127.0.0.1:9090"
 DELAY_URL = "http://www.gstatic.com/generate_204"
 API = "https://api.telegram.org/bot" + TOKEN
@@ -544,10 +545,11 @@ def set_dot_domain(domain):
         return False, "证书签发失败:\n" + (r.stdout + r.stderr)[-500:]
     live = f"/etc/letsencrypt/live/{domain}"
     try:
-        shutil.copy(f"{live}/fullchain.pem", "/etc/dnsdist/certs/fullchain.pem")
-        shutil.copy(f"{live}/privkey.pem", "/etc/dnsdist/certs/privkey.pem")
-        sh(["chown", "-R", "_dnsdist:_dnsdist", "/etc/dnsdist/certs"])
-        sh(["chmod", "640", "/etc/dnsdist/certs/fullchain.pem", "/etc/dnsdist/certs/privkey.pem"])
+        os.makedirs(CERT_DIR, exist_ok=True)
+        shutil.copy(f"{live}/fullchain.pem", os.path.join(CERT_DIR, "fullchain.pem"))
+        shutil.copy(f"{live}/privkey.pem", os.path.join(CERT_DIR, "privkey.pem"))
+        os.chmod(os.path.join(CERT_DIR, "fullchain.pem"), 0o644)
+        os.chmod(os.path.join(CERT_DIR, "privkey.pem"), 0o600)
         with open("/opt/pdg-bot/dot-domain", "w") as f:
             f.write(domain + "\n")
     except Exception as e:  # noqa: BLE001

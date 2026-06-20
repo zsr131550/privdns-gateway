@@ -1,97 +1,80 @@
 # PrivDNS Gateway
 
-**Android / iOS 私密 DNS 单入口多出口分流网关** — 口语版「私密 DNS 版 Surge 网关」。
-
-手机端只设置系统级**私密 DNS / 加密 DNS**，不装任何 VPN / Clash / sing-box 客户端。
-服务端 JP 作为唯一入口与分流中心：DNS 把需要代理的域名统一指向 JP 内网 IP，
-JP 上的 sing-box 透明入口 sniff 出域名后，再分流到 HK / TW 现有 SS2022 出口或 JP 本地。
+**单入口、多出口的「私密 DNS 分流网关」** —— 手机端**只设系统私密 DNS(DoT)**,不装任何 VPN / Clash / sing-box 客户端;服务端按域名把流量分到不同落地或直连。
 
 ```
-Android / iOS
-  │  私密 DNS / DoH / DoT
-  ▼
-JP dnsdist ──► 命中代理域名: 返回 JP 唯一内网 IP
-  │           DIRECT 域名: 返回真实 IP   BLOCK: NXDOMAIN
-  ▼
-JP sing-box (透明 tproxy 入口, sniff SNI/Host)
-  ├── AI / Binance        → TW SS2022
-  ├── YouTube/Netflix/X/IG → HK SS2022
-  └── 默认                  → JP 直出
+ 手机 (Android 私密DNS / iOS 描述文件, 仅 DoT)
+   │  DoT :853
+   ▼
+ 网关 VPS ── mosdns ──► 国内域名: 返回真实 IP (直连)
+   │                   代理域名: A 记录劫持成「本机 IP」, AAAA/HTTPS 置空
+   │  :80/:443 sniff SNI
+   ▼
+ sing-box ──► 按域名分流: AI/加密→落地A  其余国际→落地B  默认→本机直出
 ```
 
-核心约束：**DNS 与 sing-box 必须由同一份 `rules.conf` 生成**，否则会出现
-「DNS 认为某域名要代理、sing-box 却没有对应分流」的不一致。`pdg compile` 保证两者同源。
+核心思想:**把 DNS 当策略引擎**。代理域名的 A 记录被改写成网关自己的 IP,流量于是回到网关;sing-box 嗅探 SNI/Host 后再决定走哪个落地。手机全程只有一条「私密 DNS」设置,没有任何客户端、没有 tun。
 
-## 仓库结构
+---
 
-```
-config/            配置样例 (装到 /etc/pdg)
-  rules.conf         上层规则 (Surge 风格, 唯一规则源)
-  policies.conf      策略 → 出口映射
-  pdg.conf           主配置 (入口 IP / 端口 / SS2022 出口)
-src/pdg/           Python 控制面 (零三方依赖, 仅标准库)
-  rules/             解析 / 远程 RULE-SET 缓存 / 编译器
-  generators/        dnsdist / sing-box / nftables 生成器
-  cli.py             pdg 命令行
-deploy/            install.sh / systemd / dnsdist 主配置 / iOS mobileconfig
-docs/              架构 / 部署 / 客户端设置
-```
+## ⚠️ 这个项目适合谁 / 前提
 
-## 快速开始 (开发机)
+它**不是通用翻墙工具**,依赖一个特定拓扑:
 
-无需 root，仓库内直接跑（产物写到 `./var/out`）：
+- 一台**墙外 VPS**(网关 + DNS)。
+- 一张运营商「**内网卡 / 定向内网 SIM**」—— 手机的移动流量经运营商私网到达你 VPS,且**源 IP 是固定私有段**(如 `172.x`)。网关靠这个私有源段来区分「该劫持的查询」和别人。
+  - 没有这种内网卡 → DNS 劫持会影响到所有查询源,不适用本项目。
+- 一个你能改 DNS 记录的**域名**(给 DoT 用,签 Let's Encrypt 证书)。
+- 一个 **Telegram bot**(管理出口/分流)。
+- 一个或多个**落地节点**(ss2022 / vmess / trojan / vless),用来出国际流量(可选,默认其余国际从 VPS 直出)。
+
+> 这套打法来源于墙内「内网卡 + 私密 DNS」玩法(参考 5GPN 等)。如果你不在这个场景,大概率用不上。
+
+---
+
+## 一键安装 (Debian 12+ / Ubuntu 22+)
 
 ```bash
-export PYTHONPATH=src
-python3 -m pdg.cli compile --no-download   # 生成三件套到 var/out/
-python3 -m pdg.cli test chatgpt.com        # 查某域名分流
-python3 -m pdg.cli status                  # 查看配置与产物
+git clone https://github.com/<你的用户名>/privdns-gateway.git
+cd privdns-gateway
+sudo ./install.sh
 ```
 
-## 部署 (JP, Debian 12)
+脚本会:装 mosdns + sing-box(1.12) + 管理 bot + 防火墙 + 证书;**自动识别公网 IP 和内网卡段**;交互填 bot token / 你的 TG id / DoT 域名。**域名 A 记录这步留给你自己做**(脚本会等你确认指向本机后再签证书)。详见 [docs/INSTALL.md](docs/INSTALL.md)。
 
-```bash
-sudo deploy/install.sh        # 装 pdg + 目录骨架 + systemd 单元
-sudoedit /etc/pdg/pdg.conf    # 填 jp_internal_ip 与 HK/TW SS2022 凭据
-# 放置 /etc/pdg/tls/{fullchain,privkey}.pem, 安装 dnsdist 与 sing-box
-sudo pdg compile && sudo pdg reload
-sudo systemctl enable --now dnsdist sing-box pdg-tproxy
-sudo pdg doctor
-```
+卸载:`sudo ./uninstall.sh`(加 `--purge` 连配置一起删)。
 
-详见 [docs/deployment.md](docs/deployment.md) 与 [docs/client-setup.md](docs/client-setup.md)。
+## 装完之后
 
-## 命令速查
+1. 手机【私密 DNS / DoT】填你的域名(如 `dot.example.com`)。
+2. Telegram 给 bot 发 `/start`:
+   - **📤 出口管理 → 添加**:粘贴 `ss:// / vmess:// / trojan:// / vless://` 落地链接。
+   - **📑 分流管理**:把域名 / Surge `.list` 规则集指到出口(默认其余国际走 VPS 直出)。
+   - **🔀 故障切换组**:多落地自动选最快 / 坏了自动切。
+3. iOS:bot **📱 客户端 → iOS 描述文件**,装上即可(蜂窝双卡探测 `:81` 已自动配好)。
+4. 换域名:bot **🌐 DoT 自定义域名**,自动签证书并切换。
 
-| 命令 | 作用 |
-|---|---|
-| `pdg compile [--no-download]` | 编译生成 dnsdist/sing-box/nftables 配置 (不 reload) |
-| `pdg reload` | 编译 + 校验 + reload 服务 (校验失败自动回滚) |
-| `pdg update-rules [--force]` | 刷新远程 RULE-SET 后 reload |
-| `pdg rollback` | 回滚到上一次产物 |
-| `pdg test <domain>` | 查域名命中的规则 / 策略 / 出口 / DNS 行为 |
-| `pdg status` / `pdg doctor` | 查看配置 / 体检 |
-| `pdg ruleset list \| refresh <name>` | 远程 RULE-SET 管理 |
-| `pdg rule add\|del\|move ...` | 编辑 rules.conf |
+## 组成
 
-## 现状（JP 实跑上线，Path B + TG bot）
+| 层 | 用什么 | 说明 |
+|---|---|---|
+| DNS | **mosdns v5** | 国内直连 / 代理域名 A 劫持到本机 + AAAA/HTTPS 置空 / 按来源 IP 分支 / ECS 分治 / 缓存。DoT(853) |
+| 流量 | **sing-box 1.12** | `direct` 监听 + `sniff_override_destination`(**不用 tproxy**);多出口 urltest 故障切换;clash_api 测速/流量 |
+| 管理 | **Telegram bot**(纯标准库) | 出口/分流/规则集/测速/流量/备份恢复/iOS下发/自定义域名,改 sing-box 前 `check`+回滚 |
+| 证书 | **certbot standalone** | Let's Encrypt,自动续期(已处理 80 口被 sing-box 占的坑) |
+| 防火墙 | **nftables** | 对全网只留 SSH;DNS/数据/探测口只放行内网卡来源段 |
 
-- ✅ **DNS 层 = mosdns**：geosite「国内直连 + 其余全代理兜底」，AAAA/HTTPS 仅对代理域名置空、直连域名回真实，
-  ECS 国内/海外分治；替换 5GPN 的 dnsdist（保留作回滚）。配置 [deploy/mosdns/config.yaml](deploy/mosdns/config.yaml)。
-- ✅ **流量层 = sing-box 1.12**：`direct` 普通监听 + `sniff_override_destination`（80/443 TCP + 443 QUIC），
-  多出口（AI·加密→TW，其余国际→HK），含 UDP 自环 reject 修复。
-- ✅ **TG 管理 bot v3**：[deploy/bot/](deploy/bot)，管出口（ss/vmess/trojan/vless）、**故障切换组(urltest)**、
-  分流规则、Surge 规则集、**端到端测出口/流量统计(clash_api)**、**iOS 描述文件下发**、**配置备份/恢复**、重启/更新。
-- ✅ **mosdns 缓存** + 停用 5GPN 残留进程；**定时刷新规则库**（[pdg-rules-update.timer](deploy/bot/pdg-rules-update.timer)，每日）。
-- ✅ **自定义 DoT 域名**：bot「🌐 DoT 自定义域名」`/setdot`，校验 A 记录→certbot 自动签证书→切换；不锁 ClouDNS，可换 Cloudflare 等任意 DNS。
-  顺带修好了原 certbot 续期会被 sing-box 占 80 口拖垮的隐患（[deploy/cert/](deploy/cert)）。
-- ✅ **iOS OnDemand :81 探测端点**：[probe81.py](deploy/ios/probe81.py) + nft 仅放行 172.22→81，实现双卡区分激活。
-- ✅ **bot 二级菜单**：一级=状态/测出口/流量 + 出口/分流/客户端/运维四分类，点开二级，不再一屏按钮看花眼。
-- ✅ 小内存友好：三件套常驻 ≈ 90MB，512MB 小鸡可跑。
-- ✅ 实测全通：YouTube / ChatGPT / Google / Play / 国内直连。详见 [docs/production-notes.md](docs/production-notes.md)。
-- ⬜ 已知限制：Telegram App（硬编码 IP，走日本，改不了）。
+> ⚠️ sing-box **必须 1.12.x** —— 1.13 移除了 `sniff_override_destination`,本网关会失效。install.sh 已固定版本。
 
-> 仓库里的 `src/pdg`（规则编译器内核）+ `deploy/singbox` 是早期 Path A 的实现与模板；线上现以 mosdns(Path B)
-> + sing-box + bot 为准，见 [docs/production-notes.md](docs/production-notes.md)。
+## 文档
 
-见 [ROADMAP.md](ROADMAP.md) 与 [docs/production-notes.md](docs/production-notes.md)。
+- [docs/INSTALL.md](docs/INSTALL.md) — 安装细节 / DNS 配置 / 排障
+- [docs/production-notes.md](docs/production-notes.md) — 实战记录与踩坑(sing-box 版本坑、QUIC 自环、ECS、安全加固等)
+
+## 免责声明
+
+本项目仅供**学习与合法网络管理**用途。请遵守你所在地的法律法规;使用者自行承担责任。作者不对任何使用后果负责。
+
+## License
+
+[MIT](LICENSE)

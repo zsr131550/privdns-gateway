@@ -166,7 +166,7 @@ gvt2.com / gvt3.com / android.com`，`systemctl restart dnsdist` 生效。
 
 ### 🟠 Bug：证书续期会串证书
 - deploy-hook 原按 `RENEWED_LINEAGE` 部署 → 切自定义域名后，旧 `gkgj` 域名续期会把 gkgj 证书**覆盖回**活动域名，DoT 失配。
-- 改为以 `/opt/pdg-bot/dot-domain`（活动域名）为准，多域名也只部署当前生效那张；并写入当前 `gkgj.abrdns.com` 使其确定。
+- 改为以 `/opt/pdg-bot/dot-domain`（活动域名）为准，多域名也只部署当前生效那张；并写入当前 `dot.example.com` 使其确定。
 
 ### 🟡 Bug（bot）
 - `getUpdates` 网络出错时无退避 → 断网紧打循环。加 `if not r.get("ok"): sleep(3); continue`。
@@ -177,4 +177,4 @@ gvt2.com / gvt3.com / android.com`，`systemctl restart dnsdist` 生效。
   DoT 源就是内网卡(172.22) → 固化。最终对全网只剩 `22`，`53/80/81/443/853` 全限 172.22。
   关键避坑：nft 把单元素集 `{ 22 }` 归一化成 `22`（无大括号），别被 `grep 'dport [{]'` 误判成 22 规则丢了——SSH 实测可新建。
 - **journald 封顶 50M**：`/etc/systemd/journald.conf.d/50-pdg.conf` `SystemMaxUse=50M` + `journalctl --vacuum-size=50M`。
-- 注：`certbot delete gkgj.abrdns.com` 属于"切到自定义域名之后"的清理；当前 gkgj 仍是生效 DoT 证书，**不能删**。
+- 注：`certbot delete dot.example.com` 属于"切到自定义域名之后"的清理；当前 gkgj 仍是生效 DoT 证书，**不能删**。

@@ -1,5 +1,9 @@
 log:
   level: warn
+# 占位符由 install.sh 渲染:
+#   __SERVER_IP__     本机公网 IP (代理域名 A 记录劫持到这里)
+#   __INTERNAL_CIDR__ 内网卡来源段 (只有这个来源的查询才劫持/分流)
+#   __CERT_DIR__      DoT 证书目录 (含 fullchain.pem / privkey.pem)
 plugins:
   - tag: remote_upstream
     type: forward
@@ -12,7 +16,7 @@ plugins:
     args: { files: ["/etc/mosdns/rules/geosite_cn.txt","/etc/mosdns/rules/geosite_apple.txt","/etc/mosdns/rules/custom_direct.txt"] }
   - tag: npn_clients
     type: ip_set
-    args: { ips: ["172.22.0.0/16"] }
+    args: { ips: ["__INTERNAL_CIDR__"] }
   - tag: ecs_china
     type: ecs_handler
     args: {forward: false, send: true, preset: "139.226.48.0", mask4: 24, mask6: 48}
@@ -22,9 +26,7 @@ plugins:
   - tag: has_resp
     type: sequence
     args: [ { matches: has_resp, exec: accept } ]
-  # 响应缓存 (lazy: TTL 过期也先返旧应答再后台刷新, 降时延/上游压力)。
-  # 只在 internal_sequence 内缓存: 该分支按 qname+qtype 决定 (直连真IP / 代理服IP / 置空),
-  # 与来源无关, 缓存安全; 普通 WiFi 来源那条 (回真实IP) 不缓存, 避免跨来源污染。
+  # 响应缓存 (lazy): 只在 internal_sequence 内缓存, 按 qname+qtype 缓存安全。
   - tag: lazy_cache
     type: cache
     args:
@@ -46,7 +48,7 @@ plugins:
         exec: reject 0
       - exec: jump has_resp
       - matches: qtype 1
-        exec: black_hole __JP_PUBLIC_IP__
+        exec: black_hole __SERVER_IP__
       - exec: jump has_resp
       - exec: $ecs_neutral
       - exec: $remote_upstream
@@ -64,4 +66,4 @@ plugins:
     args: {entry: main_sequence, listen: "0.0.0.0:53"}
   - tag: dot_server
     type: tcp_server
-    args: {entry: main_sequence, listen: "0.0.0.0:853", cert: "/etc/dnsdist/certs/fullchain.pem", key: "/etc/dnsdist/certs/privkey.pem"}
+    args: {entry: main_sequence, listen: "0.0.0.0:853", cert: "__CERT_DIR__/fullchain.pem", key: "__CERT_DIR__/privkey.pem"}

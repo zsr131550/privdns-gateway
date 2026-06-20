@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PrivDNS Gateway — iOS OnDemand 探测端点。
-监听 0.0.0.0:81, 任意 GET 返回 204。配合 nftables 只放行 172.22.0.0/16 → :81,
+监听 0.0.0.0:81, 任意 GET 返回 204。配合 nftables 只放行「内网卡来源段」→ :81,
 普通卡探不通(被 drop)、内网卡探得通(204) → iOS OnDemand 据此只在内网卡(蜂窝)激活 DoT, 实现双卡区分。
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer

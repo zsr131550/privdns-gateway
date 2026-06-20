@@ -7,6 +7,7 @@ Wants=network-online.target
 # 真实 token / 允许的 user id 只写在本机的 drop-in 或这里, 不进版本库。
 Environment=PDG_BOT_TOKEN=__BOT_TOKEN__
 Environment=PDG_BOT_ALLOWED=__ALLOWED_IDS__
+Environment=PDG_CERT=__CERT_DIR__/fullchain.pem
 ExecStart=/usr/bin/python3 /opt/pdg-bot/bot.py
 Restart=on-failure
 RestartSec=3

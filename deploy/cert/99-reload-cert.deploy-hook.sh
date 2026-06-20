@@ -17,13 +17,13 @@ else
 fi
 [[ -z "$LIVE_DIR" ]] && { echo "[!] no LE live dir"; exit 1; }
 
-mkdir -p /etc/dnsdist/certs
-cp "$LIVE_DIR/fullchain.pem" /etc/dnsdist/certs/fullchain.pem
-cp "$LIVE_DIR/privkey.pem"   /etc/dnsdist/certs/privkey.pem
-chown -R _dnsdist:_dnsdist /etc/dnsdist/certs/
-chmod 640 /etc/dnsdist/certs/*.pem
+# DoT 证书目录 (mosdns dot_server 读这里)。默认 /etc/mosdns/certs; 旧机可用 PDG_CERT_DIR 覆盖。
+CERT_DIR="${PDG_CERT_DIR:-/etc/mosdns/certs}"
+mkdir -p "$CERT_DIR"
+cp "$LIVE_DIR/fullchain.pem" "$CERT_DIR/fullchain.pem"
+cp "$LIVE_DIR/privkey.pem"   "$CERT_DIR/privkey.pem"
+chmod 644 "$CERT_DIR/fullchain.pem"
+chmod 600 "$CERT_DIR/privkey.pem"
 
-# mosdns 现在是 DoT(853) 的实际服务者; dnsdist 已停用(保留则也 reload)。
 systemctl is-active --quiet mosdns && systemctl restart mosdns
-systemctl is-active --quiet dnsdist && { systemctl reload dnsdist 2>/dev/null || systemctl restart dnsdist; }
 exit 0
