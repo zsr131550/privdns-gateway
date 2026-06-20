@@ -61,14 +61,20 @@ cd privdns-gateway && sudo ./install.sh
 
 ```bash
 sudo pdg            # 进管理菜单
-sudo pdg update     # 一键更新到最新代码(git pull + 刷新, 不动配置/出口/token)
-sudo pdg token      # 设置 / 更换 bot token
+sudo pdg doctor     # 体检(只读, 一眼看出哪不对); 加 --json 可脚本化
 sudo pdg status     # 状态
+sudo pdg update     # 更新(更新前自动快照, 失败自动回滚; --dry-run 看待更新)
+sudo pdg snapshot   # 手动留一份配置快照
+sudo pdg rollback   # 回滚到最近快照
+sudo pdg token      # 设置 / 更换 bot token
 sudo pdg restart    # 重启服务
 sudo pdg log [n]    # 看日志
-sudo pdg ios        # 不用 bot, 直接出 iOS 描述文件二维码(手机扫码安装)
+sudo pdg traffic    # 网卡流量(vnstat)
+sudo pdg ios        # 不用 bot, 直接出 iOS 描述文件二维码
 sudo pdg uninstall [--purge]   # 卸载(--purge 连配置删)
 ```
+
+> 健康自检每 10 分钟自动跑,服务挂 / DNS 不应答 / 证书快到期会 Telegram 私信你。
 
 > 分工:`pdg` 管**生命周期**(装/更新/卸载/token/状态);**出口 / 分流 / DNS 上游**等运行时配置都在 Telegram bot 里。
 
@@ -86,8 +92,10 @@ sudo pdg uninstall [--purge]   # 卸载(--purge 连配置删)
 
 ## 文档
 
-- [docs/INSTALL.md](docs/INSTALL.md) — 安装细节 / DNS 配置 / 排障
+- [docs/INSTALL.md](docs/INSTALL.md) — 安装细节 / DNS 配置 / 端口 / 版本注意
+- [docs/TROUBLESHOOTING-PLAYBOOK.md](docs/TROUBLESHOOTING-PLAYBOOK.md) — 排障手册(症状 → 查 → 修)
 - [docs/production-notes.md](docs/production-notes.md) — 实战记录与踩坑(sing-box 版本坑、QUIC 自环、ECS、安全加固等)
+- [CHANGELOG.md](CHANGELOG.md) — 更新日志
 
 ## 免责声明
 
