@@ -103,7 +103,8 @@ def _nav(key):
         "rule": ("📑 <b>分流管理</b> — 选一项:", [
             [{"text": "📋 规则", "callback_data": "rules"}, {"text": "➕ 加规则", "callback_data": "add_rule"},
              {"text": "🗑 删规则", "callback_data": "del_rule"}],
-            [{"text": "📚 加规则集", "callback_data": "add_rs"}, {"text": "🗑 删规则集", "callback_data": "del_rs"}]]),
+            [{"text": "📚 加规则集", "callback_data": "add_rs"}, {"text": "🗑 删规则集", "callback_data": "del_rs"}],
+            [{"text": "🔎 测域名(查走哪)", "callback_data": "testdom"}]]),
         "client": (f"📱 <b>客户端接入</b>\nAndroid 私密DNS 填: <code>{_dot_host()}</code>\niOS 点下方生成描述文件:", [
             [{"text": "📱 iOS 描述文件", "callback_data": "ios"}],
             [{"text": "🌐 DoT 自定义域名", "callback_data": "setdot"}]]),
@@ -582,7 +583,7 @@ def traffic_text():
             parts.append(f"实时读取失败: {e}")
     v = _vnstat()
     parts.append("📊 <b>总用量(vnstat·网卡真实)</b>\n" + v if v
-                 else "📊 总用量: vnstat 未装或暂无数据(刚装需跑一会儿才有)")
+                 else "📊 总用量: vnstat 暂无数据")
     return "\n\n".join(parts)
 
 # ── 单条规则增删 ──
@@ -625,6 +626,72 @@ def del_rule(domain):
     if domain in _read_direct():
         _write_direct([d for d in _read_direct() if d != domain]); removed.append("直连表")
     return (bool(removed), f"已删除 {domain} ({'+'.join(removed)})" if removed else f"未找到含 {domain} 的规则")
+
+# ── 测域名: 输入域名 → 直连 or 哪个出口(命中哪条规则/规则集) ──
+def _internal_probe_ip():
+    """从 mosdns npn_clients 段取一个探测地址(末位 .250), 用作内网卡来源查 mosdns。"""
+    try:
+        m = re.search(r'ips:\s*\[\s*"([^"/]+)', open(MOSDNS_CONF).read())
+        if m:
+            o = m.group(1).split(".")
+            if len(o) == 4:
+                o[3] = "250"; return ".".join(o)
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+def _match_ruleset(name, d, sufs):
+    p = os.path.join(RS_DIR, name + ".json")
+    if not os.path.exists(p):
+        return False  # .srs 二进制无法解析
+    try:
+        rules = json.load(open(p)).get("rules", [])
+    except Exception:  # noqa: BLE001
+        return False
+    for rule in rules:
+        if d in rule.get("domain", []):
+            return True
+        if any(d == s or d.endswith("." + s) for s in rule.get("domain_suffix", [])):
+            return True
+        if any(k in d for k in rule.get("domain_keyword", [])):
+            return True
+    return False
+
+def _singbox_route(d):
+    sufs = [".".join(d.split(".")[i:]) for i in range(len(d.split(".")))]
+    c = load()
+    for r in c["route"]["rules"]:
+        if "outbound" not in r:
+            continue
+        if d in r.get("domain", []) or any(d == s or d.endswith("." + s) for s in r.get("domain_suffix", [])):
+            return r["outbound"], "显式域名规则"
+        if any(k in d for k in r.get("domain_keyword", [])):
+            return r["outbound"], "关键词规则"
+        rs = r.get("rule_set")
+        if rs and _match_ruleset(rs, d, sufs):
+            return r["outbound"], f"规则集 {rs}"
+    return c["route"].get("final"), "默认(其余国际)"
+
+def test_domain(domain):
+    d = domain.strip().lstrip(".").lower().split("/")[0]
+    if not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", d):
+        return "域名格式不对, 例: <code>netflix.com</code>"
+    sip = _server_ip(); probe = _internal_probe_ip(); real = []
+    if probe:
+        sh(["ip", "addr", "add", probe + "/32", "dev", "lo"])
+        try:
+            out = sh(["dig", "+short", "+time=2", "+tries=1", "@127.0.0.1", "-b", probe, d, "A"]).stdout
+            real = [x for x in out.split() if re.match(r"^\d+\.\d+\.\d+\.\d+$", x)]
+        finally:
+            sh(["ip", "addr", "del", probe + "/32", "dev", "lo"])
+    head = f"🔎 <b>{d}</b>\n"
+    if real and sip not in real:
+        return head + f"→ 🏠 <b>国内直连</b>(mosdns 返回真实 IP {real[0]})"
+    tag, why = _singbox_route(d)
+    res = head + f"→ 📤 出口 <b>{tag}</b>(命中: {why})"
+    if not real:
+        res += "\n<i>(没探到 DNS 结果, 直连/代理未实测; 以上为 sing-box 规则模拟)</i>"
+    return res
 
 # ── 自定义 DoT 域名 (certbot standalone 签证书 → 换 mosdns DoT 证书) ──
 def set_dot_domain(domain):
@@ -916,6 +983,9 @@ def handle_cb(chat, mid, data):
     if data == "del_rule":
         state[chat] = "del_rule"
         edit(chat, mid, "发要删除的域名，例 <code>netflix.com</code>。/cancel 取消。", BACK); return
+    if data == "testdom":
+        state[chat] = "test_dom"
+        edit(chat, mid, "发个域名, 查它走哪个出口/规则(还是国内直连)。\n例: <code>netflix.com</code>\n/cancel 取消。", BACK); return
     if data == "add_rs":
         state[chat] = "add_rs"
         edit(chat, mid, f"发「<b>规则集URL 出口</b>」(Surge .list)。出口: {', '.join(exit_tags(load()))}\n例: <code>https://.../Binance.list tw</code>\n/cancel 取消。", BACK); return
@@ -1084,6 +1154,8 @@ def handle_text(chat, text):
         return
     if act == "del_rule":
         ok, msg = del_rule(text); send_plain(chat, ("✅ " if ok else "") + msg); return
+    if act == "test_dom":
+        send_plain(chat, test_domain(text)); return
     if act == "add_rs":
         p = text.split()
         if len(p) != 2:
