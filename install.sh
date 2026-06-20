@@ -7,10 +7,11 @@
 #   PDG_SKIP_CERT=1  跳过 certbot, 生成自签占位证书 (之后用 bot 补正式证书)
 # 做什么: 装 mosdns + sing-box(1.12) + 管理 bot + 防火墙 + DoT 证书。
 #   自动识别公网IP / 内网卡段; DNS(域名 A 记录) 那步留给你自己做; 落地出口装好后用 bot 加。
+# 也支持 curl|bash 直接跑: curl -fsSL <raw>/install.sh | sudo bash  (脚本会自动拉取仓库)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_URL="https://github.com/misaka-cpu/privdns-gateway.git"
 MOSDNS_VER="v5.3.4"
 SINGBOX_VER="1.12.9"          # 必须 1.12.x —— 1.13 移除了 sniff_override_destination, 本网关会失效
 CERT_DIR="/etc/mosdns/certs"
@@ -20,11 +21,24 @@ c_g(){ echo -e "\033[1;32m[*]\033[0m $*"; }
 c_y(){ echo -e "\033[1;33m[!]\033[0m $*"; }
 die(){ echo -e "\033[1;31m[x]\033[0m $*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo ./install.sh"
+[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo ./install.sh  (或 curl ... | sudo bash)"
 command -v apt-get >/dev/null || die "目前仅支持 Debian/Ubuntu (apt)"
 case "$(dpkg --print-architecture)" in
   amd64) MARCH=amd64 ;; arm64) MARCH=arm64 ;; *) die "不支持的架构: $(dpkg --print-architecture)";;
 esac
+
+# ── 自举: 若通过 curl|bash 直接运行(不在仓库内), 自动 clone 后从文件重跑 ──
+# (从文件重跑能让 read 交互正常: curl|bash 时 stdin 是脚本本身, 故把 stdin 接回 /dev/tty)
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)"
+if [[ ! -f "$SRC/deploy/mosdns/config.yaml" ]]; then
+  c_g "未在仓库目录内运行 → 自动拉取 privdns-gateway…"
+  command -v git >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; }
+  DEST=/opt/privdns-gateway
+  if [[ -d "$DEST/.git" ]]; then git -C "$DEST" pull -q --ff-only || true
+  else rm -rf "$DEST"; git clone -q --depth 1 "$REPO_URL" "$DEST"; fi
+  if [[ -e /dev/tty ]]; then exec bash "$DEST/install.sh" "$@" < /dev/tty; else exec bash "$DEST/install.sh" "$@"; fi
+fi
+REPO_DIR="$SRC"
 
 # ── 1. 依赖 ──
 c_g "安装依赖…"

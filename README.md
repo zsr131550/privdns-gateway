@@ -28,19 +28,22 @@
 - 一个 **Telegram bot**(管理出口/分流)。
 - 一个或多个**落地节点**(ss2022 / vmess / trojan / vless),用来出国际流量(可选,默认其余国际从 VPS 直出)。
 
-> 这套打法来源于墙内「内网卡 + 私密 DNS」玩法(参考 5GPN 等)。如果你不在这个场景,大概率用不上。
-
 ---
 
 ## 一键安装 (Debian 12+ / Ubuntu 22+)
 
 ```bash
-git clone https://github.com/misaka-cpu/privdns-gateway.git
-cd privdns-gateway
-sudo ./install.sh
+curl -fsSL https://raw.githubusercontent.com/misaka-cpu/privdns-gateway/main/install.sh | sudo bash
 ```
 
-脚本会:装 mosdns + sing-box(1.12) + 管理 bot + 防火墙 + 证书;**自动识别公网 IP 和内网卡段**;交互填 bot token / 你的 TG id / DoT 域名。**域名 A 记录这步留给你自己做**(脚本会等你确认指向本机后再签证书)。详见 [docs/INSTALL.md](docs/INSTALL.md)。
+或克隆后运行(便于先看代码):
+
+```bash
+git clone https://github.com/misaka-cpu/privdns-gateway.git
+cd privdns-gateway && sudo ./install.sh
+```
+
+脚本会装好 mosdns、sing-box(1.12)、管理 bot、防火墙和证书,自动识别公网 IP 和内网卡段,再交互填 bot token、你的 TG id、DoT 域名。域名 A 记录这步留给你自己做(脚本会等你确认指向本机后再签证书)。详见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 卸载:`sudo ./uninstall.sh`(加 `--purge` 连配置一起删)。
 
@@ -49,7 +52,7 @@ sudo ./install.sh
 1. 手机【私密 DNS / DoT】填你的域名(如 `dot.example.com`)。
 2. Telegram 给 bot 发 `/start`:
    - **📤 出口管理 → 添加**:粘贴 `ss:// / vmess:// / trojan:// / vless://` 落地链接。
-   - **📑 分流管理**:把域名 / Surge `.list` 规则集指到出口(默认其余国际走 VPS 直出)。
+   - **📑 分流管理**:把域名、`.list` / `.txt` 等规则集指到出口(默认其余国际走 VPS 直出)。
    - **🔀 故障切换组**:多落地自动选最快 / 坏了自动切。
 3. iOS:bot **📱 客户端 → iOS 描述文件**,装上即可(蜂窝双卡探测 `:81` 已自动配好)。
 4. 换域名:bot **🌐 DoT 自定义域名**,自动签证书并切换。

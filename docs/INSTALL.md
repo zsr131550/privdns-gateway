@@ -17,6 +17,14 @@
 
 ## 2. 跑安装
 
+一行装(脚本会自动把仓库拉到 `/opt/privdns-gateway` 再跑):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/misaka-cpu/privdns-gateway/main/install.sh | sudo bash
+```
+
+或克隆后运行:
+
 ```bash
 git clone https://github.com/misaka-cpu/privdns-gateway.git
 cd privdns-gateway
