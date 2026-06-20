@@ -3,7 +3,7 @@
 # 用法: detect-internal-range.sh [抓包秒数] [本机公网IP(仅用于提示)]
 # 成功: stdout 打印 CIDR (如 172.22.0.0/16) 并 exit 0; 失败: 空输出 exit 1。
 set -uo pipefail
-DUR="${1:-40}"
+DUR="${1:-90}"
 SERVER_IP="${2:-本机公网IP}"
 
 command -v tcpdump >/dev/null 2>&1 || { echo "" ; exit 1; }

@@ -87,11 +87,12 @@ if [[ -z "$INTERNAL_CIDR" ]]; then
   if [[ -n "$NONINT" ]]; then
     INTERNAL_CIDR="172.16.0.0/12"
   else
-    echo; c_y "识别【内网卡来源段】(抓包 ~40s, 期间用手机走【内网卡/蜂窝】访问本机一次)"
-    DET_CIDR=$(bash "$REPO_DIR/lib/detect-internal-range.sh" 40 "$SERVER_IP" || true)
-    [[ -n "$DET_CIDR" ]] && c_g "抓到内网卡段: $DET_CIDR" || c_y "没抓到, 请手填。"
-    read -rp "内网卡来源段 CIDR [${DET_CIDR:-172.16.0.0/12}]: " INTERNAL_CIDR
-    INTERNAL_CIDR="${INTERNAL_CIDR:-${DET_CIDR:-172.16.0.0/12}}"
+    echo; c_y "识别【内网卡来源段】(抓包 ~90s, 期间用手机走【内网卡/蜂窝, 关 WiFi】访问本机一次)"
+    DET_CIDR=$(bash "$REPO_DIR/lib/detect-internal-range.sh" 90 "$SERVER_IP" || true)
+    [[ -n "$DET_CIDR" ]] && c_g "抓到内网卡段: $DET_CIDR" || c_y "没抓到。请手填你内网卡精确的 /16 (如 172.22.0.0/16)。"
+    read -rp "内网卡来源段 CIDR [${DET_CIDR:-请手填如 172.22.0.0/16}]: " INTERNAL_CIDR
+    INTERNAL_CIDR="${INTERNAL_CIDR:-${DET_CIDR:-}}"
+    [[ -n "$INTERNAL_CIDR" ]] || die "必须填内网卡来源段 (形如 172.22.0.0/16)"
   fi
 fi
 
