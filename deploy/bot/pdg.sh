@@ -23,9 +23,56 @@ cmd_status(){
 
 cmd_doctor(){ python3 /opt/pdg-bot/doctor.py "$@"; }
 
+SNAP_DIR="/var/lib/privdns-gateway/backups"
+
+cmd_snapshot(){
+  need_root snapshot
+  local ts d; ts=$(date +%Y%m%d-%H%M%S); d="$SNAP_DIR/$ts"
+  install -d -m700 "$d"
+  # 整机配置 + 防火墙 + 含 token 的 service(相对 / 打包, 回滚直接 -C / 解开)
+  tar czf "$d/snap.tar.gz" -C / \
+    etc/mosdns etc/sing-box opt/pdg-bot \
+    etc/nftables.conf etc/systemd/system/pdg-bot.service 2>/dev/null
+  chmod 600 "$d/snap.tar.gz"
+  echo "✅ 快照: $d/snap.tar.gz"
+  ls -1dt "$SNAP_DIR"/*/ 2>/dev/null | tail -n +11 | xargs -r rm -rf   # 只留最近 10 份
+}
+
+cmd_rollback(){
+  need_root rollback
+  local snaps; mapfile -t snaps < <(ls -1dt "$SNAP_DIR"/*/ 2>/dev/null)
+  [[ ${#snaps[@]} -gt 0 ]] || { echo "没有快照(先 pdg snapshot)"; return 1; }
+  echo "可用快照(新→旧):"; local i=0; for s in "${snaps[@]}"; do echo "  [$i] $(basename "$s")"; i=$((i+1)); done
+  local idx="${1:-0}" target="${snaps[${1:-0}]}"
+  [[ -n "$target" ]] || { echo "无效序号 $idx"; return 1; }
+  local f="$target/snap.tar.gz"
+  [[ -f "$f" ]] || { echo "快照文件缺失: $f"; return 1; }
+  # 先校验快照里的 sing-box / nft 再动手(rule_set 路径临时指向解包目录)
+  local tmp; tmp=$(mktemp -d); tar xzf "$f" -C "$tmp"
+  if [[ -f "$tmp/etc/sing-box/config.json" ]]; then
+    sed "s#/etc/sing-box/rs/#$tmp/etc/sing-box/rs/#g" "$tmp/etc/sing-box/config.json" > "$tmp/sb.chk"
+    sing-box check -c "$tmp/sb.chk" >/dev/null 2>&1 || { echo "❌ 快照的 sing-box 配置 check 失败, 中止"; rm -rf "$tmp"; return 1; }
+  fi
+  [[ -f "$tmp/etc/nftables.conf" ]] && { nft -c -f "$tmp/etc/nftables.conf" >/dev/null 2>&1 || { echo "❌ 快照的 nftables 语法错, 中止"; rm -rf "$tmp"; return 1; }; }
+  rm -rf "$tmp"
+  echo "回滚到 $(basename "$target") …"
+  tar xzf "$f" -C /
+  systemctl daemon-reload
+  nft -f /etc/nftables.conf 2>/dev/null || true
+  systemctl restart mosdns sing-box pdg-bot pdg-probe81 2>/dev/null || true
+  echo "✅ 已回滚并重启服务"
+}
+
 cmd_update(){
   need_root update
   command -v git >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; }
+  if [[ "${1:-}" == "--dry-run" ]]; then
+    [[ -d "$REPO_DIR/.git" ]] && git -C "$REPO_DIR" fetch -q origin main 2>/dev/null
+    echo "待更新的提交(HEAD..origin/main):"
+    git -C "$REPO_DIR" log --oneline HEAD..origin/main 2>/dev/null || echo "  (已是最新, 或无法比较)"
+    return 0
+  fi
+  c_g "更新前留快照…"; cmd_snapshot >/dev/null 2>&1 || true
   c_g "拉取最新代码…"
   if [[ -d "$REPO_DIR/.git" ]]; then
     git -C "$REPO_DIR" fetch -q origin main && git -C "$REPO_DIR" reset --hard -q origin/main
@@ -49,10 +96,16 @@ cmd_update(){
   install -m755 "$REPO_DIR"/deploy/cert/99-reload-cert.deploy-hook.sh     /etc/letsencrypt/renewal-hooks/deploy/99-pdg-cert.sh
   install -m755 "$REPO_DIR"/deploy/bot/pdg-set-token.sh     /usr/local/bin/pdg-set-token
   install -m755 "$REPO_DIR"/deploy/bot/pdg.sh               /usr/local/bin/pdg
-  python3 -m py_compile /opt/pdg-bot/bot.py 2>/dev/null || { c_y "新 bot.py 语法异常?? 已保留旧服务"; }
+  if ! python3 -m py_compile /opt/pdg-bot/bot.py 2>/dev/null; then
+    c_y "新 bot.py 语法异常, 自动回滚到更新前快照…"; cmd_rollback 0; return 1
+  fi
   systemctl daemon-reload
   systemctl enable --now pdg-health.timer >/dev/null 2>&1 || true   # 老装升级时补上健康自检
   systemctl restart pdg-bot pdg-probe81 2>/dev/null || true
+  sleep 2
+  if [[ "$(systemctl is-active pdg-bot 2>/dev/null)" != "active" ]]; then
+    c_y "pdg-bot 更新后起不来, 自动回滚到更新前快照…"; cmd_rollback 0; return 1
+  fi
   c_g "✅ 已更新。"
 }
 
@@ -114,27 +167,23 @@ cmd_uninstall(){
 menu(){
   while true; do
     echo; c_g "===== PrivDNS Gateway 管理 ====="
-    echo "  1) 状态"
-    echo "  2) 体检(doctor)"
-    echo "  3) 更新"
-    echo "  4) 设置 / 更换 bot token"
-    echo "  5) 重启服务"
-    echo "  6) 日志"
-    echo "  7) 流量(vnstat 网卡累计)"
-    echo "  8) iOS 描述文件"
-    echo "  9) 卸载"
-    echo "  0) 退出"
+    echo "  1) 状态        2) 体检(doctor)   3) 更新"
+    echo "  4) 快照备份    5) 回滚            6) 设置/更换 token"
+    echo "  7) 重启服务    8) 日志            9) 流量(vnstat)"
+    echo " 10) iOS 描述文件   11) 卸载          0) 退出"
     read -rp "选择: " c || exit 0
     case "$c" in
       1) cmd_status;;
       2) cmd_doctor;;
       3) cmd_update;;
-      4) cmd_token;;
-      5) cmd_restart;;
-      6) cmd_log 60;;
-      7) cmd_traffic;;
-      8) cmd_ios;;
-      9) read -rp "卸载: 留空取消 / yes 仅卸载 / purge 连配置一起删: " x
+      4) cmd_snapshot;;
+      5) read -rp "回滚到第几个快照(默认 0=最近, 回车确认): " i; cmd_rollback "${i:-0}";;
+      6) cmd_token;;
+      7) cmd_restart;;
+      8) cmd_log 60;;
+      9) cmd_traffic;;
+      10) cmd_ios;;
+      11) read -rp "卸载: 留空取消 / yes 仅卸载 / purge 连配置一起删: " x
          case "$x" in yes) cmd_uninstall;; purge) cmd_uninstall --purge;; *) echo "已取消";; esac;;
       0|q) exit 0;;
       *) echo "无效选择";;
@@ -146,12 +195,14 @@ case "${1:-menu}" in
   menu|"")       menu;;
   status|st)     cmd_status;;
   doctor|dr)     shift || true; cmd_doctor "${1:-}";;
-  update|up)     cmd_update;;
+  update|up)     shift || true; cmd_update "${1:-}";;
+  snapshot|snap) cmd_snapshot;;
+  rollback)      shift || true; cmd_rollback "${1:-0}";;
   token)         cmd_token;;
   restart)       cmd_restart;;
   log|logs)      shift || true; cmd_log "${1:-40}";;
   traffic|tr)    cmd_traffic;;
   ios)           cmd_ios;;
   uninstall|rm)  shift || true; cmd_uninstall "${1:-}";;
-  *) echo "用法: pdg [menu|status|doctor [--json]|update|token|restart|log [n]|traffic|ios|uninstall [--purge]]";;
+  *) echo "用法: pdg [menu|status|doctor [--json]|update [--dry-run]|snapshot|rollback [n]|token|restart|log [n]|traffic|ios|uninstall [--purge]]";;
 esac

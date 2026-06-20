@@ -20,6 +20,6 @@ if [[ "${1:-}" == "--purge" ]]; then
         /usr/local/bin/proxy-gateway-open-cert-http.sh \
         /usr/local/bin/proxy-gateway-restore-firewall.sh \
         /etc/letsencrypt/renewal-hooks/deploy/99-pdg-cert.sh
-  rm -rf /opt/privdns-gateway     # 仓库副本 (放最后, 脚本已载入内存, 删它安全)
+  rm -rf /opt/privdns-gateway /var/lib/privdns-gateway   # 仓库副本 + 快照 (放最后, 脚本已载入内存, 删它安全)
   echo "已 purge。证书目录 /etc/letsencrypt 仍保留(含账户), 如需彻底清除请手动 certbot delete。"
 fi
