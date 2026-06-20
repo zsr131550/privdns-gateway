@@ -719,6 +719,10 @@ def handle_cb(chat, mid, data):
         edit(chat, mid, "发你的自定义 DoT 域名(先把它的 A 记录指向本机, Cloudflare 用「灰云 DNS only」)。\n"
              f"本机 IP: <code>{_server_ip()}</code>\n例: <code>dot.example.com</code>\n"
              "我会自动签 Let's Encrypt 证书并切换(过程会短暂中断代理约 30 秒)。/cancel 取消。", BACK); return
+    if data.startswith("dosetdot:"):
+        domain = data[9:]
+        edit(chat, mid, f"正在为 <code>{domain}</code> 校验 A 记录并签证书(约 30-60 秒, 代理短暂中断)…", None)
+        ok, msg = set_dot_domain(domain); edit(chat, mid, (msg if ok else "❌ " + msg), MENU); return
     if data == "test":
         edit(chat, mid, "测试中…", None); edit(chat, mid, test_exits(), BACK); return
     if data == "traffic":
@@ -859,6 +863,10 @@ def handle_text(chat, text):
         if cmd == "/restore":
             state[chat] = "restore"; send(chat, "把备份 .tar.gz 作为文件发来。/cancel 取消。", BACK); return
         if cmd == "/setdot":
+            parts = text.split()
+            if len(parts) >= 2:
+                send_plain(chat, "正在校验+签证书(约 30-60 秒, 代理短暂中断)…")
+                ok, msg = set_dot_domain(parts[1]); send_plain(chat, msg if ok else ("❌ " + msg)); return
             state[chat] = "set_dot"; send(chat, f"发自定义 DoT 域名(A 记录先指向本机 {_server_ip()})。/cancel 取消。", BACK); return
         if cmd == "/restart":
             ok, _ = apply_sb(lambda c: None); sh(["systemctl", "restart", "mosdns"]); send_plain(chat, "✅ 已重启" if ok else "重启失败"); return
@@ -900,6 +908,14 @@ def handle_text(chat, text):
         ok, msg = set_dot_domain(text); send_plain(chat, msg if ok else ("❌ " + msg)); return
     if act == "restore":
         send_plain(chat, "请把备份 <code>.tar.gz</code> 作为「文件」发来, 而不是文字。/cancel 取消。"); state[chat] = "restore"; return
+    # 裸发一个像域名的文本: 当作想设 DoT 域名, 给一键按钮 (省得先点菜单进状态)
+    if re.match(r"^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,}$", text.lower()):
+        d = text.lower()
+        send(chat, f"想把 <code>{d}</code> 设成 DoT 自定义域名吗?\n"
+                   f"先确认它的 A 记录已指向本机 <code>{_server_ip()}</code>(Cloudflare 用灰云 DNS only)。",
+             {"inline_keyboard": [[{"text": "🌐 是, 签证书并切换", "callback_data": "dosetdot:" + d}],
+                                  [{"text": "取消", "callback_data": "menu"}]]})
+        return
     send_plain(chat, "发 /start 打开菜单")
 
 # ── 文件 (配置恢复) ──
