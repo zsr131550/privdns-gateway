@@ -16,8 +16,10 @@ if [[ "${1:-}" == "--purge" ]]; then
   echo "[--purge] 删除配置与数据…"
   rm -rf /etc/mosdns /etc/sing-box /opt/pdg-bot
   rm -f /usr/local/bin/mosdns /usr/local/bin/sing-box \
+        /usr/local/bin/pdg /usr/local/bin/pdg-set-token \
         /usr/local/bin/proxy-gateway-open-cert-http.sh \
         /usr/local/bin/proxy-gateway-restore-firewall.sh \
         /etc/letsencrypt/renewal-hooks/deploy/99-pdg-cert.sh
+  rm -rf /opt/privdns-gateway     # 仓库副本 (放最后, 脚本已载入内存, 删它安全)
   echo "已 purge。证书目录 /etc/letsencrypt 仍保留(含账户), 如需彻底清除请手动 certbot delete。"
 fi
