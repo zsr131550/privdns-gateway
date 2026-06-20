@@ -3,9 +3,9 @@
 set -uo pipefail
 [[ $EUID -eq 0 ]] || { echo "请用 root 运行"; exit 1; }
 
-systemctl disable --now pdg-bot pdg-probe81 mosdns sing-box pdg-rules-update.timer 2>/dev/null || true
-rm -f /etc/systemd/system/{pdg-bot,pdg-probe81,mosdns,sing-box,pdg-rules-update}.service \
-      /etc/systemd/system/pdg-rules-update.timer \
+systemctl disable --now pdg-bot pdg-probe81 mosdns sing-box pdg-rules-update.timer pdg-health.timer 2>/dev/null || true
+rm -f /etc/systemd/system/{pdg-bot,pdg-probe81,mosdns,sing-box,pdg-rules-update,pdg-health}.service \
+      /etc/systemd/system/pdg-rules-update.timer /etc/systemd/system/pdg-health.timer \
       /etc/systemd/system/journald.conf.d/50-pdg.conf
 systemctl daemon-reload
 

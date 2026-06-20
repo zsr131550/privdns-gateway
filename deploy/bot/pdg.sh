@@ -35,7 +35,10 @@ cmd_update(){
   install -m755 "$REPO_DIR"/deploy/bot/parse-geosite.py     /opt/pdg-bot/
   install -m755 "$REPO_DIR"/deploy/bot/update-rules.sh      /opt/pdg-bot/
   install -m755 "$REPO_DIR"/deploy/bot/scheduled-update.sh  /opt/pdg-bot/
+  install -m755 "$REPO_DIR"/deploy/bot/healthcheck.py      /opt/pdg-bot/
   install -m755 "$REPO_DIR"/deploy/ios/probe81.py           /opt/pdg-bot/
+  install -m644 "$REPO_DIR"/deploy/bot/pdg-health.service  /etc/systemd/system/ 2>/dev/null || true
+  install -m644 "$REPO_DIR"/deploy/bot/pdg-health.timer    /etc/systemd/system/ 2>/dev/null || true
   install -m644 "$REPO_DIR"/deploy/ios/pdg-dot-ondemand.mobileconfig.tmpl /opt/pdg-bot/pdg-dot.mobileconfig.tmpl
   install -m755 "$REPO_DIR"/deploy/cert/proxy-gateway-open-cert-http.sh   /usr/local/bin/
   install -m755 "$REPO_DIR"/deploy/cert/proxy-gateway-restore-firewall.sh /usr/local/bin/
@@ -44,6 +47,7 @@ cmd_update(){
   install -m755 "$REPO_DIR"/deploy/bot/pdg.sh               /usr/local/bin/pdg
   python3 -m py_compile /opt/pdg-bot/bot.py 2>/dev/null || { c_y "新 bot.py 语法异常?? 已保留旧服务"; }
   systemctl daemon-reload
+  systemctl enable --now pdg-health.timer >/dev/null 2>&1 || true   # 老装升级时补上健康自检
   systemctl restart pdg-bot pdg-probe81 2>/dev/null || true
   c_g "✅ 已更新。"
 }

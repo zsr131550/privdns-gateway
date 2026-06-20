@@ -113,6 +113,7 @@ install -m755 "$REPO_DIR"/deploy/bot/pdg-bot.py            /opt/pdg-bot/bot.py
 install -m755 "$REPO_DIR"/deploy/bot/parse-geosite.py     /opt/pdg-bot/
 install -m755 "$REPO_DIR"/deploy/bot/update-rules.sh      /opt/pdg-bot/
 install -m755 "$REPO_DIR"/deploy/bot/scheduled-update.sh  /opt/pdg-bot/
+install -m755 "$REPO_DIR"/deploy/bot/healthcheck.py      /opt/pdg-bot/
 install -m755 "$REPO_DIR"/deploy/ios/probe81.py           /opt/pdg-bot/
 install -m644 "$REPO_DIR"/deploy/ios/pdg-dot-ondemand.mobileconfig.tmpl /opt/pdg-bot/pdg-dot.mobileconfig.tmpl
 install -m755 "$REPO_DIR"/deploy/cert/proxy-gateway-open-cert-http.sh     /usr/local/bin/
@@ -137,6 +138,8 @@ render "$REPO_DIR/deploy/bot/pdg-bot.service"         > /etc/systemd/system/pdg-
 chmod 600 /etc/systemd/system/pdg-bot.service        # 含 token
 install -m644 "$REPO_DIR"/deploy/bot/pdg-rules-update.service /etc/systemd/system/
 install -m644 "$REPO_DIR"/deploy/bot/pdg-rules-update.timer   /etc/systemd/system/
+install -m644 "$REPO_DIR"/deploy/bot/pdg-health.service       /etc/systemd/system/
+install -m644 "$REPO_DIR"/deploy/bot/pdg-health.timer         /etc/systemd/system/
 install -m644 "$REPO_DIR"/deploy/ios/pdg-probe81.service      /etc/systemd/system/
 install -m644 "$REPO_DIR"/deploy/firewall/journald-50-pdg.conf /etc/systemd/system/journald.conf.d/50-pdg.conf
 
@@ -203,6 +206,7 @@ systemctl daemon-reload
 systemctl restart systemd-journald
 systemctl enable --now mosdns sing-box pdg-probe81 >/dev/null 2>&1 || true
 systemctl enable --now pdg-rules-update.timer >/dev/null 2>&1 || true
+systemctl enable --now pdg-health.timer >/dev/null 2>&1 || true
 if [[ -n "$BOT_TOKEN" && -n "$ALLOWED_IDS" ]]; then
   systemctl enable --now pdg-bot >/dev/null 2>&1 || true
 else
