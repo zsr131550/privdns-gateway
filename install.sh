@@ -2,9 +2,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # PrivDNS Gateway 一键安装 (Debian 12+ / Ubuntu 22+, 需 root)
 #   sudo ./install.sh
+# 非交互/自动化: 预置 PDG_* 环境变量 + PDG_NONINTERACTIVE=1 (见 docs/INSTALL.md)。
+#   PDG_SERVER_IP PDG_SSH_PORT PDG_INTERNAL_CIDR PDG_BOT_TOKEN PDG_ALLOWED PDG_DOT_DOMAIN
+#   PDG_SKIP_CERT=1  跳过 certbot, 生成自签占位证书 (之后用 bot 补正式证书)
 # 做什么: 装 mosdns + sing-box(1.12) + 管理 bot + 防火墙 + DoT 证书。
-#   自动识别公网IP / 内网卡段; DNS(域名 A 记录) 那步留给你自己做。
-#   落地出口安装后用 bot 添加。
+#   自动识别公网IP / 内网卡段; DNS(域名 A 记录) 那步留给你自己做; 落地出口装好后用 bot 加。
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -12,6 +14,7 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 MOSDNS_VER="v5.3.4"
 SINGBOX_VER="1.12.9"          # 必须 1.12.x —— 1.13 移除了 sniff_override_destination, 本网关会失效
 CERT_DIR="/etc/mosdns/certs"
+NONINT="${PDG_NONINTERACTIVE:-}"
 
 c_g(){ echo -e "\033[1;32m[*]\033[0m $*"; }
 c_y(){ echo -e "\033[1;33m[!]\033[0m $*"; }
@@ -25,6 +28,7 @@ esac
 
 # ── 1. 依赖 ──
 c_g "安装依赖…"
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl tar unzip nftables python3 openssl certbot dnsutils tcpdump jq ca-certificates >/dev/null
 
@@ -47,26 +51,43 @@ if ! sing-box version 2>/dev/null | grep -q "version 1.12"; then
   rm -rf "$t"
 fi
 
-# ── 4. 收集参数 ──
+# ── 4. 收集参数 (env 预置优先; PDG_NONINTERACTIVE=1 则不交互) ──
 echo
-DET_IP=$(curl -fsSL --max-time 8 https://api.ipify.org 2>/dev/null || ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
-read -rp "本机公网 IP [${DET_IP}]: " SERVER_IP; SERVER_IP="${SERVER_IP:-$DET_IP}"
+SERVER_IP="${PDG_SERVER_IP:-}"
+if [[ -z "$SERVER_IP" ]]; then
+  DET_IP=$(curl -fsSL --max-time 8 https://api.ipify.org 2>/dev/null || ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+  if [[ -n "$NONINT" ]]; then SERVER_IP="$DET_IP"; else read -rp "本机公网 IP [${DET_IP}]: " SERVER_IP; SERVER_IP="${SERVER_IP:-$DET_IP}"; fi
+fi
 [[ -n "$SERVER_IP" ]] || die "公网 IP 不能为空"
 
-DET_SSH=$(ss -lntH 'sport = :22' 2>/dev/null | grep -q . && echo 22 || ss -lntpH 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]; exit}')
-read -rp "SSH 端口 [${DET_SSH:-22}]: " SSH_PORT; SSH_PORT="${SSH_PORT:-${DET_SSH:-22}}"
+SSH_PORT="${PDG_SSH_PORT:-}"
+if [[ -z "$SSH_PORT" ]]; then
+  DET_SSH=$(ss -lntpH 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]; exit}'); DET_SSH="${DET_SSH:-22}"
+  if [[ -n "$NONINT" ]]; then SSH_PORT="$DET_SSH"; else read -rp "SSH 端口 [${DET_SSH}]: " SSH_PORT; SSH_PORT="${SSH_PORT:-$DET_SSH}"; fi
+fi
 
-echo
-c_y "下面识别【内网卡来源段】—— 只有这个来源的查询才会被劫持/分流。"
-DET_CIDR=$(bash "$REPO_DIR/lib/detect-internal-range.sh" 40 "$SERVER_IP" || true)
-[[ -n "$DET_CIDR" ]] && c_g "抓到内网卡段: $DET_CIDR" || c_y "没抓到(可稍后手填)。"
-read -rp "内网卡来源段 CIDR [${DET_CIDR:-172.16.0.0/12}]: " INTERNAL_CIDR
-INTERNAL_CIDR="${INTERNAL_CIDR:-${DET_CIDR:-172.16.0.0/12}}"
+INTERNAL_CIDR="${PDG_INTERNAL_CIDR:-}"
+if [[ -z "$INTERNAL_CIDR" ]]; then
+  if [[ -n "$NONINT" ]]; then
+    INTERNAL_CIDR="172.16.0.0/12"
+  else
+    echo; c_y "识别【内网卡来源段】(抓包 ~40s, 期间用手机走【内网卡/蜂窝】访问本机一次)"
+    DET_CIDR=$(bash "$REPO_DIR/lib/detect-internal-range.sh" 40 "$SERVER_IP" || true)
+    [[ -n "$DET_CIDR" ]] && c_g "抓到内网卡段: $DET_CIDR" || c_y "没抓到, 请手填。"
+    read -rp "内网卡来源段 CIDR [${DET_CIDR:-172.16.0.0/12}]: " INTERNAL_CIDR
+    INTERNAL_CIDR="${INTERNAL_CIDR:-${DET_CIDR:-172.16.0.0/12}}"
+  fi
+fi
 
-echo
-read -rp "Telegram bot token: " BOT_TOKEN; [[ -n "$BOT_TOKEN" ]] || die "token 不能为空"
-read -rp "你的 Telegram user id (只允许它管理): " ALLOWED_IDS; [[ -n "$ALLOWED_IDS" ]] || die "user id 不能为空"
-read -rp "DoT 域名 (如 dot.example.com): " DOT_DOMAIN; [[ -n "$DOT_DOMAIN" ]] || die "域名不能为空"
+BOT_TOKEN="${PDG_BOT_TOKEN:-}"; ALLOWED_IDS="${PDG_ALLOWED:-}"; DOT_DOMAIN="${PDG_DOT_DOMAIN:-}"
+if [[ -z "$NONINT" ]]; then
+  echo
+  [[ -n "$BOT_TOKEN"   ]] || read -rp "Telegram bot token: " BOT_TOKEN
+  [[ -n "$ALLOWED_IDS" ]] || read -rp "你的 Telegram user id (只允许它管理): " ALLOWED_IDS
+  [[ -n "$DOT_DOMAIN"  ]] || read -rp "DoT 域名 (如 dot.example.com): " DOT_DOMAIN
+fi
+[[ -n "$BOT_TOKEN" && -n "$ALLOWED_IDS" && -n "$DOT_DOMAIN" ]] \
+  || die "token / user id / 域名 不能为空 (非交互请用 PDG_BOT_TOKEN/PDG_ALLOWED/PDG_DOT_DOMAIN)"
 
 # ── 5. 目录 + 静态文件 ──
 c_g "铺设文件…"
@@ -122,30 +143,43 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-# ── 6. DoT 证书 (DNS 由你先做好 A 记录) ──
-echo
-c_y "现在签 DoT 证书。请先确认: $DOT_DOMAIN 的 A 记录已指向 $SERVER_IP"
-c_y "(Cloudflare 等用『灰云 / DNS only』, 不要开代理; 等生效后再继续)"
-read -rp "A 记录已指好? 回车继续签发 / Ctrl-C 退出去配 DNS: " _
-certbot certonly --standalone -d "$DOT_DOMAIN" --non-interactive --agree-tos \
-  --register-unsafely-without-email --keep-until-expiring \
-  --pre-hook  /usr/local/bin/proxy-gateway-open-cert-http.sh \
-  --post-hook /usr/local/bin/proxy-gateway-restore-firewall.sh \
-  || die "证书签发失败: 检查 A 记录是否已生效、80 口是否能从公网到达"
-echo "$DOT_DOMAIN" > /opt/pdg-bot/dot-domain
-install -m644 "/etc/letsencrypt/live/$DOT_DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem"
-install -m600 "/etc/letsencrypt/live/$DOT_DOMAIN/privkey.pem"   "$CERT_DIR/privkey.pem"
+# ── 6. DoT 证书 ──
+if [[ -n "${PDG_SKIP_CERT:-}" ]]; then
+  c_y "PDG_SKIP_CERT: 跳过 certbot, 生成自签占位证书 (生产请用 bot『🌐 DoT 自定义域名』补正式证书)"
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERT_DIR/privkey.pem" \
+    -out "$CERT_DIR/fullchain.pem" -days 3650 -subj "/CN=$DOT_DOMAIN" >/dev/null 2>&1
+  chmod 644 "$CERT_DIR/fullchain.pem"; chmod 600 "$CERT_DIR/privkey.pem"
+  echo "$DOT_DOMAIN" > /opt/pdg-bot/dot-domain
+else
+  echo
+  c_y "现在签 DoT 证书。请先确认: $DOT_DOMAIN 的 A 记录已指向 $SERVER_IP"
+  c_y "(Cloudflare 等用『灰云 / DNS only』, 不要开代理; 等生效后再继续)"
+  [[ -n "$NONINT" ]] || read -rp "A 记录已指好? 回车继续签发 / Ctrl-C 退出去配 DNS: " _
+  certbot certonly --standalone -d "$DOT_DOMAIN" --non-interactive --agree-tos \
+    --register-unsafely-without-email --keep-until-expiring \
+    --pre-hook  /usr/local/bin/proxy-gateway-open-cert-http.sh \
+    --post-hook /usr/local/bin/proxy-gateway-restore-firewall.sh \
+    || die "证书签发失败: 检查 A 记录是否已生效、80 口是否能从公网到达"
+  echo "$DOT_DOMAIN" > /opt/pdg-bot/dot-domain
+  install -m644 "/etc/letsencrypt/live/$DOT_DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem"
+  install -m600 "/etc/letsencrypt/live/$DOT_DOMAIN/privkey.pem"   "$CERT_DIR/privkey.pem"
+fi
 
-# ── 7. geosite 规则库 ──
+# ── 7. geosite 规则库 (此时 DNS 仍可用) ──
 c_g "下载并解析 geosite 规则库…"
 bash /opt/pdg-bot/update-rules.sh || c_y "geosite 下载失败, 装好后可在 bot『更新规则库』重试"
 
 # ── 8. 启动 ──
 c_g "启动服务…"
+# 释放 53 口: systemd-resolved 的 stub 占 127.0.0.53:53, 会和 mosdns 0.0.0.0:53 冲突
+if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+  systemctl disable --now systemd-resolved 2>/dev/null || true
+fi
+rm -f /etc/resolv.conf; printf 'nameserver 1.1.1.1\n' > /etc/resolv.conf
 systemctl daemon-reload
 systemctl restart systemd-journald
-systemctl enable --now mosdns sing-box pdg-bot pdg-probe81 >/dev/null 2>&1
-systemctl enable --now pdg-rules-update.timer >/dev/null 2>&1
+systemctl enable --now mosdns sing-box pdg-bot pdg-probe81 >/dev/null 2>&1 || true
+systemctl enable --now pdg-rules-update.timer >/dev/null 2>&1 || true
 printf 'nameserver 127.0.0.1\nnameserver 1.1.1.1\n' > /etc/resolv.conf
 
 # ── 9. 防火墙 ──

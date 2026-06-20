@@ -50,6 +50,27 @@ sudo ./install.sh
 
 日志:`journalctl -u mosdns -u sing-box -u pdg-bot -n 50`。
 
+## 非交互 / 自动化安装
+
+预置环境变量 + `PDG_NONINTERACTIVE=1` 即可无人值守(适合脚本化/复刻):
+
+```bash
+sudo PDG_NONINTERACTIVE=1 \
+     PDG_SERVER_IP=203.0.113.10 \
+     PDG_SSH_PORT=22 \
+     PDG_INTERNAL_CIDR=172.22.0.0/16 \
+     PDG_BOT_TOKEN=123456:xxxx \
+     PDG_ALLOWED=11111111 \
+     PDG_DOT_DOMAIN=dot.example.com \
+     ./install.sh
+```
+
+- 缺省项会自动探测(公网 IP / SSH 端口)或用默认值。
+- `PDG_SKIP_CERT=1`:跳过 certbot,生成**自签占位证书**(先把服务跑起来,之后用 bot「🌐 DoT 自定义域名」补正式证书)。
+- 安装会**自动关闭 systemd-resolved**(它占 `127.0.0.53:53`,与 mosdns 的 `0.0.0.0:53` 冲突)。
+
+> 本仓库的 install.sh 已在全新 Debian 12 上实跑验证(mosdns/sing-box/bot/防火墙全部起来、DNS 劫持分流正确)。
+
 ## 版本注意
 
 - **sing-box 固定 1.12.x**。1.13 移除了 `sniff_override_destination`,升级即失效。
