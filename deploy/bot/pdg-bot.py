@@ -106,7 +106,7 @@ def _nav(key):
              {"text": "🗑 删规则", "callback_data": "del_rule"}],
             [{"text": "✏️ 改出口", "callback_data": "edit_rule"}, {"text": "📚 加规则集", "callback_data": "add_rs"},
              {"text": "🗑 删规则集", "callback_data": "del_rs"}],
-            [{"text": "🔎 测域名(查走哪)", "callback_data": "testdom"}]]),
+            [{"text": "✏️ 改规则集名", "callback_data": "edit_rs"}, {"text": "🔎 测域名(查走哪)", "callback_data": "testdom"}]]),
         "client": (f"📱 <b>客户端接入</b>\nAndroid 私密DNS 填: <code>{_dot_host()}</code>\niOS 点下方生成描述文件:", [
             [{"text": "📱 iOS 描述文件", "callback_data": "ios"}],
             [{"text": "🌐 DoT 自定义域名", "callback_data": "setdot"}]]),
@@ -505,7 +505,7 @@ def _build_source(url, path):
     json.dump({"version": 1, "rules": [rule]}, open(path, "w"), ensure_ascii=False)
     return len(dom) + len(suf) + len(kw) + len(ip), (len(dom) + len(suf) + len(kw) == 0)
 
-def add_ruleset(url, target):
+def add_ruleset(url, target, label=""):
     c = load()
     if target not in exit_tags(c):
         return False, f"出口 {target} 不存在; 可选: {', '.join(exit_tags(c))}"
@@ -536,10 +536,30 @@ def add_ruleset(url, target):
     ok, msg = apply_sb(mod)
     if ok:
         m = _rs_meta(); m[name] = {"url": url, "outbound": target, "format": fmt,
-                                   "path": path, "count": count}; _save_rs_meta(m)
+                                   "path": path, "count": count}
+        if label.strip():
+            m[name]["label"] = label.strip()[:40]
+        _save_rs_meta(m)
         cntdesc = f"{count} 条" if count is not None else "sing-box .srs"
-        return True, f"规则集已添加 → {target}（{cntdesc}，{name}）" + warn
+        return True, f"规则集已添加 → {target}（{cntdesc}，{label.strip() or name}）" + warn
     return False, msg
+
+def set_ruleset_label(name, label):
+    """给规则集设个看得懂的显示名(备注), 只改 bot 显示, 不动 sing-box 内部 tag/文件。"""
+    m = _rs_meta()
+    if name not in m:
+        return False, "规则集不存在(可能已删), 重开列表再试"
+    label = label.strip()[:40]
+    if label:
+        m[name]["label"] = label
+    else:
+        m[name].pop("label", None)
+    _save_rs_meta(m)
+    return True, f"✅ 规则集名称已设为「{label or name}」"
+
+def _rs_items():
+    """[(name, 显示文字)] 供选择键盘用。"""
+    return [(n, (i.get("label") or n) + f" · {i.get('count', '?')}条") for n, i in _rs_meta().items()]
 
 def del_ruleset(name):
     m = _rs_meta(); path = m.get(name, {}).get("path")
@@ -1107,7 +1127,8 @@ def rules_text():
             continue
         if r.get("rule_set"):
             info = m.get(r["rule_set"], {})
-            lines.append(f'→ <b>{r["outbound"]}</b>: [规则集 {r["rule_set"]} · {info.get("count","?")}条]')
+            label = info.get("label") or r["rule_set"]
+            lines.append(f'→ <b>{r["outbound"]}</b>: [规则集 {label} · {info.get("count","?")}条]')
         else:
             doms = r.get("domain_suffix", []) + r.get("domain", [])
             if doms:
@@ -1120,6 +1141,12 @@ def rules_text():
 
 def kb_pick(prefix, tags):
     rows = [[{"text": t, "callback_data": f"{prefix}:{t}"}] for t in tags]
+    rows.append([{"text": "⬅️ 返回", "callback_data": "menu"}])
+    return {"inline_keyboard": rows}
+
+def kb_pick_named(prefix, items):
+    """items=[(value, 显示文字)]: 按钮显示文字, 回调用 value。"""
+    rows = [[{"text": label, "callback_data": f"{prefix}:{value}"}] for value, label in items]
     rows.append([{"text": "⬅️ 返回", "callback_data": "menu"}])
     return {"inline_keyboard": rows}
 
@@ -1210,12 +1237,22 @@ def handle_cb(chat, mid, data):
         edit(chat, mid, "发个域名, 查它走哪个出口/规则(还是国内直连)。\n例: <code>netflix.com</code>\n/cancel 取消。", BACK); return
     if data == "add_rs":
         state[chat] = "add_rs"
-        edit(chat, mid, f"发「<b>规则集URL 出口</b>」(Surge .list)。出口: {', '.join(exit_tags(load()))}\n例: <code>https://.../Binance.list tw</code>\n/cancel 取消。", BACK); return
+        edit(chat, mid, "发「<b>规则集URL 出口 [名称]</b>」(后缀 .list / .txt / .srs)。\n"
+             f"出口: {', '.join(exit_tags(load()))}\n名称可留空(之后用「✏️ 改规则集名」改)。\n"
+             "例: <code>https://.../Binance.list tw 币安</code>\n/cancel 取消。", BACK); return
     if data == "del_rs":
-        m = _rs_meta()
-        if not m:
+        if not _rs_meta():
             edit(chat, mid, "没有已添加的规则集", BACK); return
-        edit(chat, mid, "选择要删除的规则集：", kb_pick("delrs", list(m.keys()))); return
+        edit(chat, mid, "选择要删除的规则集：", kb_pick_named("delrs", _rs_items())); return
+    if data == "edit_rs":
+        if not _rs_meta():
+            edit(chat, mid, "没有已添加的规则集", BACK); return
+        edit(chat, mid, "选择要改名的规则集：", kb_pick_named("ers", _rs_items())); return
+    if data.startswith("ers:"):
+        name = data[4:]; state[chat] = "rs_label:" + name
+        cur = _rs_meta().get(name, {}).get("label") or name
+        edit(chat, mid, f"发规则集 <code>{name}</code> 的新名称(显示用, 如 <b>币安</b> / <b>OpenAI</b>)。\n"
+             f"当前: {cur}\n发「-」清除自定义名。/cancel 取消。", BACK); return
     if data == "del_exit":
         tags = deletable_tags(load())
         edit(chat, mid, "选择要删除的出口/故障组：" if tags else "没有可删的出口",
@@ -1393,10 +1430,14 @@ def handle_text(chat, text, mid=0):
         send_plain(chat, test_domain(text)); return
     if act == "add_rs":
         p = text.split()
-        if len(p) != 2:
-            send_plain(chat, "格式: 规则集URL 出口"); return
+        if len(p) < 2:
+            send_plain(chat, "格式: 规则集URL 出口 [名称]"); return
         send_plain(chat, "正在下载规则集…")
-        ok, msg = add_ruleset(p[0], p[1]); send_plain(chat, ("✅ " if ok else "") + msg); return
+        ok, msg = add_ruleset(p[0], p[1], " ".join(p[2:])); send_plain(chat, ("✅ " if ok else "") + msg); return
+    if act.startswith("rs_label:"):
+        name = act.split(":", 1)[1]
+        ok, msg = set_ruleset_label(name, "" if text.strip() == "-" else text)
+        send_plain(chat, msg if ok else ("❌ " + msg)); return
     if act == "set_dns":
         p = text.split()
         if len(p) < 2:
