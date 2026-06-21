@@ -153,6 +153,34 @@ def answer_cb_async(cb_id):
             pass
     threading.Thread(target=go, daemon=True).start()
 
+def clear_chat(chat, top_mid):
+    """后台删本会话近期消息(私聊里机器人可删双方消息, 仅限 48 小时内)。
+    从 /clear 那条往前逐条删, 连续失败多次即停(到 48h 边界)。独立连接, 不占主 _conn。"""
+    if not top_mid:
+        return
+    def go():
+        conn = http.client.HTTPSConnection("api.telegram.org", timeout=30)
+        miss = 0; mid = top_mid; tried = 0
+        while mid > 0 and miss < 25 and tried < 600:
+            try:
+                conn.request("POST", "/bot" + TOKEN + "/deleteMessage",
+                             json.dumps({"chat_id": chat, "message_id": mid}).encode(),
+                             {"Content-Type": "application/json", "Connection": "keep-alive"})
+                ok = json.loads(conn.getresponse().read() or "{}").get("ok")
+            except Exception:  # noqa: BLE001
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                conn = http.client.HTTPSConnection("api.telegram.org", timeout=30); ok = False
+            miss = 0 if ok else miss + 1
+            mid -= 1; tried += 1
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    threading.Thread(target=go, daemon=True).start()
+
 def sh(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
@@ -1254,10 +1282,16 @@ def handle_cb(chat, mid, data):
         ok, msg = del_ruleset(data[6:]); edit(chat, mid, ("✅ " if ok else "") + msg, MENU); return
 
 # ── 文本 ──
-def handle_text(chat, text):
+def handle_text(chat, text, mid=0):
     text = text.strip()
     if text == "/cancel":
         state.pop(chat, None); send_plain(chat, "已取消"); return
+    if text == "/clear":
+        state.pop(chat, None)
+        send_plain(chat, "🧹 正在清屏: 删除近期聊天(节点等敏感信息)…\n"
+                         "Telegram 限制只能删 48 小时内的消息; 本条会留下。")
+        clear_chat(chat, mid)   # 从 /clear 这条往前删, 上面这条提示(更靠后)会保留
+        return
     if text in ("/start", "/menu", "/status"):
         state.pop(chat, None); send(chat, status_text()); return
     if text.startswith("/"):
@@ -1387,7 +1421,8 @@ def main():
     post("deleteWebhook", {"drop_pending_updates": False})
     cmds = [
         {"command": "start", "description": "打开菜单 / 状态"},
-        {"command": "cancel", "description": "取消当前输入"}]
+        {"command": "cancel", "description": "取消当前输入"},
+        {"command": "clear", "description": "清屏: 删除近期聊天(节点等敏感信息)"}]
     post("setMyCommands", {"commands": cmds})
     post("setMyCommands", {"commands": cmds, "scope": {"type": "all_private_chats"}})
     print("pdg-bot v3 started, allowed:", ALLOWED, flush=True)
@@ -1404,7 +1439,7 @@ def main():
                     if m["from"]["id"] not in ALLOWED:
                         continue
                     if "text" in m:
-                        handle_text(m["chat"]["id"], m["text"])
+                        handle_text(m["chat"]["id"], m["text"], m.get("message_id", 0))
                     elif "document" in m:
                         handle_document(m["chat"]["id"], m["document"])
                 elif "callback_query" in u:
