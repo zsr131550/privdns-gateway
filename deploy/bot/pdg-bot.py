@@ -1398,7 +1398,7 @@ def handle_text(chat, text, mid=0):
             send_plain(chat, "更新中…"); r = sh(["/bin/bash", UPDATE_SCRIPT]); n = refresh_rulesets()
             send_plain(chat, f"✅ 完成，规则集刷新 {n} 个" if r.returncode == 0 else "更新失败"); return
         send_plain(chat, "未识别命令，发 /start 打开菜单"); return
-    act = state.pop(chat, None)
+    act = state.pop(chat, None) or ""   # 无待输入时为 "", 避免下面 act.startswith(...) 在 None 上崩
     if act == "add_exit":
         try:
             ob = parse_link(text)
