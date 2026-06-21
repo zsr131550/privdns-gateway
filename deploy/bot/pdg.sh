@@ -259,7 +259,6 @@ cmd_uninstall(){
 menu(){
   while true; do
     echo; c_g "===== PrivDNS Gateway 管理 ====="
-    echo "  快捷: 下次直接运行  sudo pdg  打开本菜单"
     echo "  1) 状态"
     echo "  2) 自检 (doctor)"
     echo "  3) 更新"
@@ -274,6 +273,7 @@ menu(){
     echo " 12) 识别内网卡段"
     echo " 13) 卸载"
     echo "  0) 退出"
+    echo "  下次打开本菜单命令: pdg"
     read -rp "选择: " c || exit 0
     case "$c" in
       1) cmd_status;;
