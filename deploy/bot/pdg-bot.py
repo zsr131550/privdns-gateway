@@ -86,8 +86,8 @@ def tg_download(file_id):
 
 # 一级菜单: 只放常用诊断 + 4 个分类入口 (展开二级, 避免一屏按钮看花眼)
 MENU = {"inline_keyboard": [
-    [{"text": "📊 状态", "callback_data": "status"}, {"text": "🚦 测出口", "callback_data": "test"},
-     {"text": "📈 流量", "callback_data": "traffic"}],
+    [{"text": "📊 状态", "callback_data": "status"}, {"text": "🩺 体检", "callback_data": "doctor"}],
+    [{"text": "🚦 测出口", "callback_data": "test"}, {"text": "📈 流量", "callback_data": "traffic"}],
     [{"text": "📤 出口管理", "callback_data": "nav:exit"}, {"text": "📑 分流管理", "callback_data": "nav:rule"}],
     [{"text": "📱 客户端", "callback_data": "nav:client"}, {"text": "🛠 运维", "callback_data": "nav:ops"}],
 ]}
@@ -586,6 +586,22 @@ def traffic_text():
                  else "📊 总用量: vnstat 暂无数据")
     return "\n\n".join(parts)
 
+def doctor_text():
+    """跑共用检查库(checks.ALL), 和 `pdg doctor` 同一套, 在手机上一键体检。"""
+    try:
+        import checks
+        results = checks.run()
+    except Exception as e:  # noqa: BLE001
+        return f"🩺 体检失败: {e}"
+    icon = {"ok": "🟢", "warn": "🟡", "fail": "🔴"}
+    nf = sum(1 for l, _, _ in results if l == "fail")
+    nw = sum(1 for l, _, _ in results if l == "warn")
+    head = "🔴 有问题" if nf else ("🟡 有警告" if nw else "🟢 全部正常")
+    lines = [f"{icon.get(l, '⚪️')} <b>{lb}</b>: {d}" for l, lb, d in results]
+    tip = "\n\n出问题时排查见 docs/TROUBLESHOOTING-PLAYBOOK.md" if (nf or nw) else ""
+    return (f"🩺 <b>体检</b> — {head}  ({nf} 失败 / {nw} 警告 / 共 {len(results)})\n\n"
+            + "\n".join(lines) + tip)
+
 # ── 单条规则增删 ──
 def add_rule(domain, target):
     domain = domain.strip().lstrip(".").lower()
@@ -963,6 +979,8 @@ def handle_cb(chat, mid, data):
         ok, msg = set_dot_domain(domain); edit(chat, mid, (msg if ok else "❌ " + msg), MENU); return
     if data == "test":
         edit(chat, mid, "测试中…", None); edit(chat, mid, test_exits(), BACK); return
+    if data == "doctor":
+        edit(chat, mid, "🩺 体检中(几秒)…", None); edit(chat, mid, doctor_text(), BACK); return
     if data == "traffic":
         edit(chat, mid, traffic_text(), BACK); return
     if data == "exits":
@@ -1085,6 +1103,8 @@ def handle_text(chat, text):
         cmd = text.split()[0]
         if cmd == "/test":
             send_plain(chat, "测试中…"); send_plain(chat, test_exits()); return
+        if cmd == "/doctor":
+            send_plain(chat, "🩺 体检中…"); send(chat, doctor_text(), BACK); return
         if cmd == "/traffic":
             send(chat, traffic_text(), BACK); return
         if cmd == "/exits":
