@@ -110,7 +110,8 @@ def _nav(key):
             [{"text": "✏️ 改规则集名", "callback_data": "edit_rs"}, {"text": "🔎 测域名(查走哪)", "callback_data": "testdom"}]]),
         "client": (f"📱 <b>客户端接入</b>\nAndroid 私密DNS 填: <code>{_dot_host()}</code>\niOS 点下方生成描述文件:", [
             [{"text": "📱 iOS 描述文件", "callback_data": "ios"}],
-            [{"text": "🌐 DoT 自定义域名", "callback_data": "setdot"}]]),
+            [{"text": "🌐 DoT 自定义域名", "callback_data": "setdot"}],
+            [{"text": "✈️ Telegram 出口", "callback_data": "tgexit"}]]),
         "ops": ("🛠 <b>运维</b> — 选一项:", [
             [{"text": "🔄 重启服务", "callback_data": "restart"}, {"text": "📦 更新规则库", "callback_data": "updgeo"}],
             [{"text": "💾 备份", "callback_data": "backup"}, {"text": "♻️ 恢复", "callback_data": "restore"}],
@@ -836,6 +837,29 @@ def reorder_exits(order):
 def urltest_groups(c):
     return [o["tag"] for o in c["outbounds"] if o.get("type") == "urltest"]
 
+# ── Telegram 独立 SOCKS5(tg-proxy 入口)的出口选择 ──
+TG_INBOUND = "tg-proxy"
+
+def _tg_exit(c):
+    """tg-proxy 入口被钉到的出口; 返回 None 表示跟随默认出口(final)。"""
+    for r in c["route"]["rules"]:
+        if r.get("inbound") == [TG_INBOUND]:
+            return r.get("outbound")
+    return None
+
+def set_tg_exit(tag):
+    """钉 Telegram(tg-proxy)走某出口; tag 空 = 跟随默认出口(删掉专属规则)。"""
+    c = load()
+    if tag and tag not in exit_tags(c):
+        return False, f"出口 {tag} 不存在"
+    def mod(cc):
+        cc["route"]["rules"] = [r for r in cc["route"]["rules"] if r.get("inbound") != [TG_INBOUND]]
+        if tag:  # 放在 reject 之后、域名/规则集规则之前, 确保优先按入口判定
+            idx = 1 if cc["route"]["rules"] and cc["route"]["rules"][0].get("action") == "reject" else 0
+            cc["route"]["rules"].insert(idx, {"inbound": [TG_INBOUND], "outbound": tag})
+    ok, msg = apply_sb(mod)
+    return ok, (f"✅ Telegram 出口 → {tag or '默认出口'}" if ok else msg)
+
 # ── 测域名: 输入域名 → 直连 or 哪个出口(命中哪条规则/规则集) ──
 def _internal_probe_ip():
     """从 mosdns npn_clients 段取一个探测地址(末位 .250), 用作内网卡来源查 mosdns。"""
@@ -1281,6 +1305,16 @@ def handle_cb(chat, mid, data):
         cur = _rs_meta().get(name, {}).get("label") or name
         edit(chat, mid, f"发规则集 <code>{name}</code> 的新名称(显示用, 如 <b>币安</b> / <b>OpenAI</b>)。\n"
              f"当前: {cur}\n发「-」清除自定义名。/cancel 取消。", BACK); return
+    if data == "tgexit":
+        c = load(); cur = _tg_exit(c)
+        rows = [[{"text": ("✓ " if t == cur else "") + t, "callback_data": "tgx:" + t}] for t in exit_tags(c)]
+        rows.append([{"text": ("✓ " if not cur else "") + "跟随默认出口", "callback_data": "tgx:"}])
+        rows.append([{"text": "⬅️ 返回主菜单", "callback_data": "menu"}])
+        edit(chat, mid, "✈️ Telegram(SOCKS5 :8445)走哪个出口?\n"
+             f"当前: <b>{cur or '默认出口'}</b>\n手机里 Telegram→设置→数据和存储→代理 填 SOCKS5 <code>{_server_ip()}:8445</code>。",
+             {"inline_keyboard": rows}); return
+    if data.startswith("tgx:"):
+        ok, msg = set_tg_exit(data[4:]); edit(chat, mid, msg if ok else ("❌ " + msg), MENU); return
     if data == "del_exit":
         tags = deletable_tags(load())
         edit(chat, mid, "选择要删除的出口/故障组：" if tags else "没有可删的出口",
