@@ -1314,7 +1314,11 @@ def handle_cb(chat, mid, data):
              f"当前: <b>{cur or '默认出口'}</b>\n手机里 Telegram→设置→数据和存储→代理 填 SOCKS5 <code>{_server_ip()}:8445</code>。",
              {"inline_keyboard": rows}); return
     if data.startswith("tgx:"):
-        ok, msg = set_tg_exit(data[4:]); edit(chat, mid, msg if ok else ("❌ " + msg), MENU); return
+        ok, msg = set_tg_exit(data[4:])
+        if ok:
+            msg += ("\n\n在 Telegram → 设置 → 数据和存储 → 代理 → 加 <b>SOCKS5</b>:\n"
+                    f"服务器 <code>{_server_ip()}</code>\n端口 <code>8445</code>\n(无需用户名/密码)")
+        edit(chat, mid, msg if ok else ("❌ " + msg), MENU); return
     if data == "del_exit":
         tags = deletable_tags(load())
         edit(chat, mid, "选择要删除的出口/故障组：" if tags else "没有可删的出口",
