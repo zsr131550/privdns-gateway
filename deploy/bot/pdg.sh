@@ -55,6 +55,41 @@ migrate_botenv(){
     || sed -i -E 's#^\[Service\]#[Service]\nEnvironmentFile=-/etc/privdns-gateway/bot.env#' "$SVC"
 }
 
+# 判断旧 /etc/nftables.conf 是不是本项目"原装"防火墙(无用户自定义端口/规则/额外表)。
+# 思路: 归一化每行(去注释/空行/收紧空白)后, 必须全部落在已知白名单内; 出现任何白名单外的行
+# (额外端口、自定义链、NAT、别的 table 等)即判定"非原装" → 不自动用模板重建, 以免静默丢用户规则。
+_fw_is_stock(){
+  local f="$1" port="$2" cidr="$3" line norm a ok
+  local -a allow=(
+    "flush ruleset"
+    "table inet filter {"
+    "chain input {"
+    "type filter hook input priority 0; policy drop;"
+    'iif "lo" accept'
+    "ct state established,related accept"
+    "tcp dport { $port } accept"
+    "ip saddr $cidr tcp dport { 53, 80, 81, 443, 853, 8445 } accept"
+    "ip saddr $cidr udp dport { 53 } accept"
+    "ip saddr $cidr udp dport 443 reject"
+    "ip protocol icmp accept"
+    "ip6 nexthdr icmpv6 accept"
+    "chain forward {"
+    "type filter hook forward priority 0; policy accept;"
+    "chain output {"
+    "type filter hook output priority 0; policy accept;"
+    "}"
+  )
+  while IFS= read -r line; do
+    norm="${line%%#*}"                                   # 去掉行内/整行注释
+    norm="$(printf '%s' "$norm" | tr -s ' \t' ' ' | sed 's/^ //; s/ $//')"  # 收紧空白+去首尾
+    [[ -z "$norm" ]] && continue
+    ok=1
+    for a in "${allow[@]}"; do [[ "$norm" == "$a" ]] && { ok=0; break; }; done
+    [[ "$ok" == 0 ]] || return 1                         # 出现白名单外的行 → 非原装
+  done < "$f"
+  return 0
+}
+
 # 旧装防火墙迁移: 把旧的 `flush ruleset` + `table inet filter` 迁到独立表 `inet pdg`。幂等。
 # 不迁移则: 证书续期 pre-hook 进不了 inet pdg 开不了 80、doctor 读不到防火墙、且仍会 flush 掉别的表。
 # 安全做法: 解析旧配置里的 SSH 端口/内网段 → 渲染新模板 → nft -c 校验 → 备份 → nft -f → 删旧表。
@@ -72,7 +107,17 @@ migrate_firewall_to_pdg(){
   if [[ -z "$port" || -z "$cidr" ]]; then
     c_y "检测到旧防火墙但解析不出 SSH端口/内网段, 跳过自动迁移(可手动重渲染)。"; rm -f "$tmp"; return 0
   fi
-  c_g "检测到旧版防火墙 → 迁移到独立表 inet pdg (SSH=$port, 内网段=$cidr)…"
+  # 迁移=用标准模板重建, 只保留 SSH端口+内网段; 若旧配置里有自定义端口/规则/额外表,
+  # 重建会静默丢掉它们 → 检测到非原装就不自动迁移, 让用户手动并入(旧配置原样留在 $f)。
+  if ! _fw_is_stock "$f" "$port" "$cidr"; then
+    c_y "检测到旧防火墙含自定义规则/额外端口/额外表 → 不自动迁移(避免静默丢失你的规则)。"
+    c_y "  迁移会用标准模板重建(只保留 SSH=$port + 内网段=$cidr)。请任选其一:"
+    c_y "   • 把自定义规则并进 deploy/firewall/nftables.conf 同风格后手动 nft -f; 或"
+    c_y "   • sudo pdg migrate-fw 先迁标准部分, 再把自定义规则补到 inet pdg。"
+    c_y "  现状: 旧 inet filter 不动(证书 hook/doctor 已兼容它, 不迁也能正常用)。"
+    rm -f "$tmp"; return 0
+  fi
+  c_g "检测到旧版(原装)防火墙 → 迁移到独立表 inet pdg (SSH=$port, 内网段=$cidr)…"
   sed -e "s/__SSH_PORT__/$port/g" -e "s#__INTERNAL_CIDR__#$cidr#g" \
       "$REPO_DIR/deploy/firewall/nftables.conf" > "$tmp"
   if ! nft -c -f "$tmp" >/dev/null 2>&1; then

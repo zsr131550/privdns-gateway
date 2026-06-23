@@ -126,6 +126,7 @@ sudo PDG_NONINTERACTIVE=1 \
 
 - 从旧版 `pdg update` 上来时,**下一次以 root 运行"管理类"命令**(`update` / `restart` / 直接 `sudo pdg` 进菜单等)会**幂等自动迁移**到 `inet pdg`(解析旧 SSH端口/内网段 → 渲染 → `nft -c` 校验 → 备份 → 加载新表确认在内核 → 才删旧表;全程 SSH 不断)。
 - **只读命令**(`status` / `doctor` / `log` / `traffic` / `report`)**不会触发迁移**,以保持"只读不写"。只跑只读命令的可显式 `sudo pdg migrate-fw` 迁移。
+- **改过防火墙的不会被自动重建**:迁移是用标准模板重建(只保留 SSH 端口 + 内网段)。若你在旧 `/etc/nftables.conf` 里**手动加过端口/规则/别的 table**,自动迁移会**检测到并跳过**(避免静默丢失),旧配置原样保留。届时请把自定义规则并入 `deploy/firewall/nftables.conf` 同风格后手动 `nft -f`,或 `sudo pdg migrate-fw` 迁标准部分后再补回自定义规则。
 - 即使**尚未迁移**也能正常用:证书续期 hook 与 `doctor` 都兼容旧 `inet filter`。
 
 ## 卸载
