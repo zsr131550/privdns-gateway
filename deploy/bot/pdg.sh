@@ -78,11 +78,18 @@ migrate_firewall_to_pdg(){
   if ! nft -c -f "$tmp" >/dev/null 2>&1; then
     c_y "  新规则 nft -c 校验未过, 保留旧防火墙不动。"; rm -f "$tmp"; return 0
   fi
-  cp -a "$f" "$f.prepdg.$(date +%s)" 2>/dev/null
+  local bak; bak="$f.prepdg.$(date +%s)"
+  cp -a "$f" "$bak" 2>/dev/null
   cp "$tmp" "$f"; rm -f "$tmp"
-  nft -f "$f" 2>/dev/null                              # 载入 inet pdg(此刻旧 inet filter 仍在 → SSH 双重放行)
-  nft delete table inet filter 2>/dev/null || true     # 删旧表, 只留 inet pdg
-  c_g "  ✅ 已迁移为 inet pdg。"
+  # 关键: 只有"新表加载成功且 inet pdg 确实在内核里"才删旧表; 否则绝不删 inet filter。
+  # nft -f 是原子的, 失败则内核不变(旧 inet filter 仍在生效), 只需把 on-disk 配置还原回旧的。
+  if nft -f "$f" 2>/dev/null && nft list table inet pdg >/dev/null 2>&1; then
+    nft delete table inet filter 2>/dev/null || true   # 确认新表已载入, 再删旧表, 只留 inet pdg
+    c_g "  ✅ 已迁移为 inet pdg。"
+  else
+    cp -a "$bak" "$f" 2>/dev/null                       # 还原 on-disk 配置=旧(内核里旧表仍在)
+    c_y "  ⚠️ 新规则加载失败 → 保留旧防火墙、未删 inet filter、配置已还原(防火墙未中断)。"
+  fi
 }
 
 SNAP_DIR="/var/lib/privdns-gateway/backups"
@@ -327,11 +334,22 @@ menu(){
   done
 }
 
+# 老装升级"自愈": 旧版 pdg update 跑的是旧脚本, 不会调用迁移 → 装上新 pdg.sh 后,
+# 下一次以 root 运行 pdg(任意子命令)就幂等自动迁移防火墙(已迁移则首个 grep 秒退、不动任何东西)。
+# 卸载不触发(否则会先建表再被删)。
+if [[ $EUID -eq 0 ]]; then
+  case "${1:-menu}" in
+    uninstall|rm) : ;;
+    *) migrate_firewall_to_pdg || true ;;
+  esac
+fi
+
 case "${1:-menu}" in
   menu|"")       menu;;
   status|st)     cmd_status;;
   doctor|dr)     shift || true; cmd_doctor "${1:-}";;
   update|up)     shift || true; cmd_update "${1:-}";;
+  migrate-fw)    need_root migrate-fw; migrate_firewall_to_pdg;;
   snapshot|snap) cmd_snapshot;;
   rollback)      shift || true; cmd_rollback "${1:-0}";;
   token)         cmd_token;;
@@ -342,5 +360,5 @@ case "${1:-menu}" in
   report)        shift || true; cmd_report "$@";;
   detect-cidr|cidr) shift || true; cmd_detect_cidr "${1:-}";;
   uninstall|rm)  shift || true; cmd_uninstall "${1:-}";;
-  *) echo "用法: pdg [menu|status|doctor [--json|--deep]|update [--dry-run]|snapshot|rollback [n]|token|restart|log [n]|traffic|ios|report [--redact-ip|--full]|detect-cidr|uninstall [--purge]]";;
+  *) echo "用法: pdg [menu|status|doctor [--json|--deep]|update [--dry-run]|snapshot|rollback [n]|token|restart|log [n]|traffic|ios|report [--redact-ip|--full]|detect-cidr|migrate-fw|uninstall [--purge]]";;
 esac

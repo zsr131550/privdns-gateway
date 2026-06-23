@@ -297,26 +297,26 @@ c_g "应用防火墙…"
 systemctl enable nftables >/dev/null 2>&1 || true
 nft -f /etc/nftables.conf
 
-# ── 提交点前: 确认核心服务真的起来了 ──
-# (systemd 默认 Type=simple, `systemctl start` 返 0 只代表 exec 成功, 进程可能随即崩溃 → 必须查 is-active)
-c_g "校验核心服务…"
-svc_ok=0
-for _ in $(seq 1 12); do
-  svc_ok=1; svc_bad=0
+# ── 提交点前: 确认核心服务"持续"起来了 ──
+# systemd 默认 Type=simple, `systemctl start` 返 0 只代表 exec 成功, 进程可能随即崩溃。
+# 单看一次 active 有竞态(起来又崩) → 要求连续 3 次保持 active 才算稳(flapping 的 failed/activating 会打断)。
+c_g "校验核心服务(需连续保持 active, 防起来又崩)…"
+svc_ok=0; streak=0
+for _ in $(seq 1 20); do
+  allact=1
   for s in mosdns sing-box pdg-probe81; do
-    st=$(systemctl is-active "$s" 2>/dev/null)
-    [[ "$st" == active ]] || svc_ok=0
-    [[ "$st" == failed ]] && svc_bad=1
+    [[ "$(systemctl is-active "$s" 2>/dev/null)" == active ]] || allact=0
   done
-  [[ "$svc_ok" == 1 || "$svc_bad" == 1 ]] && break
+  if [[ "$allact" == 1 ]]; then streak=$((streak+1)); else streak=0; fi
+  [[ "$streak" -ge 3 ]] && { svc_ok=1; break; }
   sleep 1
 done
 if [[ "$svc_ok" != 1 ]]; then
   for s in mosdns sing-box pdg-probe81; do printf '  %-12s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null)"; done
   journalctl -u mosdns -u sing-box -n 20 --no-pager 2>/dev/null | sed 's/^/    /'
-  die "核心服务未能全部启动(见上日志)。"   # → 触发回滚
+  die "核心服务未能持续保持运行(见上日志)。"   # → 触发回滚
 fi
-INSTALL_OK=1   # 提交点: 核心服务已确认 active, 后面只是打印, 不再回滚
+INSTALL_OK=1   # 提交点: 核心服务已确认稳定 active, 后面只是打印, 不再回滚
 
 # ── 10. 自检 ──
 echo; c_g "安装完成。状态:"

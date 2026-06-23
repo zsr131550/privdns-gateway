@@ -2,6 +2,12 @@
 
 本项目无正式版本号,按日期记录主要变化;完整提交见 git 历史。
 
+## 2026-06-23 — 评审第三轮:迁移自愈 / 守卫删表 / active 防竞态
+
+- **首次升级也能自动迁移**:`pdg update` 自更新时,当前进程跑的还是旧脚本、不会调用新迁移逻辑(要等下一次)。现新版 `pdg` **每次以 root 运行任意子命令时都幂等自检并迁移**(已迁移则首个 grep 秒退);另加显式命令 `sudo pdg migrate-fw`。
+- **迁移加载失败绝不删旧表**:`migrate_firewall_to_pdg` 现 **只有 `nft -f` 成功且确认 `inet pdg` 已在内核** 才 `delete table inet filter`;失败则还原 on-disk 配置、保留旧表(`nft -f` 原子失败不改内核)→ 不会出现"新表没载入、旧表已删、防火墙消失"。
+- **`active` 检查防竞态**:`_svc_active` 改为**要求连续多次保持 active**(flapping 的 failed/activating 会打断连击),不再"瞄到一次 active 就放行";安装的服务门同样改为连续 3 次保持。规则集回滚后**先确认旧服务恢复再删 `.bak`**,连旧档都起不来则保留 `.bak` 备查。
+
 ## 2026-06-23 — 评审第二轮:升级迁移 / 安装事务性 / 重启校验
 
 - **`pdg update` 自动迁移旧防火墙**:老机器升级后,把旧的 `flush ruleset` + `table inet filter` 迁到独立表 `inet pdg`(解析旧配置里的 SSH 端口/内网段 → 渲染新模板 → `nft -c` 校验 → 备份 → `nft -f` → 删旧表,全程 SSH 不断、幂等)。不迁移则证书续期 pre-hook 进不了 `inet pdg`、开不了 80。

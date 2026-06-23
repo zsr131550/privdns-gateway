@@ -180,11 +180,18 @@ def _write(c):
     os.chmod(t, 0o600)        # config.json 含出口密码/uuid, 收紧到 600
     os.replace(t, SB)
 
-def _svc_active(unit, tries=6, delay=0.5):
-    """确认服务真的 active —— systemd 默认 Type=simple, restart 返 0 只代表 exec 成功, 进程可能随即崩溃。"""
-    for _ in range(tries):
+def _svc_active(unit, need=3, delay=0.6, max_polls=15):
+    """确认服务"稳定" active: 要求连续 need 次观测都是 active。
+    systemd 默认 Type=simple, restart 返 0 只代表 exec 成功; 起来又崩(flapping)时单看一次会误判 ——
+    崩溃/重启间隙的 failed/activating 会打断连击, 故要求连续保持才算稳。"""
+    streak = 0
+    for _ in range(max_polls):
         if sh(["systemctl", "is-active", unit]).stdout.strip() == "active":
-            return True
+            streak += 1
+            if streak >= need:
+                return True
+        else:
+            streak = 0
         time.sleep(delay)
     return False
 
@@ -596,12 +603,15 @@ def refresh_rulesets():
         for path, bak in swapped:
             shutil.copy(bak, path)        # 还原旧规则集
         sh(["systemctl", "reset-failed", "sing-box"]); sh(["systemctl", "restart", "sing-box"])
-        for _, bak in swapped:
-            try:
-                os.remove(bak)
-            except OSError:
-                pass
-        print("refresh rs: sing-box 重启后未 active, 已还原旧规则集并重启")
+        if _svc_active("sing-box"):       # 确认旧服务真的恢复, 再清备份
+            for _, bak in swapped:
+                try:
+                    os.remove(bak)
+                except OSError:
+                    pass
+            print("refresh rs: 新规则集致 sing-box 起不来, 已还原旧规则集并恢复")
+        else:                             # 连旧档都起不来 → 保留 .bak 备查, 不再删
+            print("refresh rs: 还原旧规则集后仍未 active, 保留 .bak 备查")
         return 0
     for _, bak in swapped:                 # 确认 active 后再清备份
         try:
