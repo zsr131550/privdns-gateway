@@ -67,7 +67,7 @@ jobs:
             echo "systemd-analyze 不可用, 跳过"
           fi
 
-      - name: ShellCheck (阻断: 有 warning 即失败)
+      - name: "ShellCheck (阻断: 有 warning 即失败)"
         run: |
           command -v shellcheck >/dev/null || sudo apt-get install -y -q shellcheck
           shellcheck --severity=warning -e SC1091 \
