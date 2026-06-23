@@ -204,8 +204,34 @@ def _upstreams_of(tag):
     m = re.search(r"- tag:\s*" + re.escape(tag) + r"\b(.*?)(?:\n\s*- tag:|\Z)", _mos(), re.S)
     return re.findall(r'addr:\s*"([^"]+)"', m.group(1)) if m else []
 
+def _dns_query(qname="example.com"):
+    """构造一个 A 查询的 wire bytes, 返回 (qid, bytes)。"""
+    import os, struct
+    qid = os.getpid() & 0xffff
+    hdr = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)              # RD=1
+    qn = b"".join(bytes([len(x)]) + x.encode() for x in qname.split(".")) + b"\x00"
+    return qid, hdr + qn + struct.pack(">HH", 1, 1)                   # QTYPE=A, QCLASS=IN
+
+def _dns_resp_ok(resp, qid):
+    """合法 DNS 应答: ID 匹配 + QR=1 + RCODE=0(NOERROR) + 至少 1 条回答。"""
+    import struct
+    if len(resp) < 12:
+        return False
+    rid, flags, _, an = struct.unpack(">HHHH", resp[:8])
+    return rid == qid and bool(flags & 0x8000) and (flags & 0x000f) == 0 and an >= 1
+
+def _recvn(sock, n):
+    b = b""
+    while len(b) < n:
+        c = sock.recv(n - len(b))
+        if not c:
+            break
+        b += c
+    return b
+
 def _probe_upstream(addr):
-    """返回 (addr, 毫秒|None, 说明)。None=不可达。udp/tcp 发真实查询; https/tls 测可达。"""
+    """返回 (addr, 毫秒|None, 说明)。None=不健康。每种协议都发真实 DNS 查询并校验应答(ID/RCODE/有回答),
+    避免"端口被别的服务占着也算健康"——CDN/反代/错服务过不了 DNS 应答校验。"""
     import time, socket
     t0 = time.monotonic()
     ok = False; note = ""
@@ -215,14 +241,25 @@ def _probe_upstream(addr):
             args = ["dig", "+time=2", "+tries=1", "+short", "@" + host, "-p", port, "example.com", "A"]
             if addr.startswith("tcp://"):
                 args.insert(1, "+tcp")
-            rc, out, _ = _run(args, t=4); ok = (rc == 0 and bool(out.strip()))
-        elif addr.startswith("https://"):
-            rc, out, _ = _run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3", addr], t=5)
-            ok = out.strip() not in ("", "000")          # 有任何 HTTP 应答即可达(无 dns 参数会回 400)
-        elif addr.startswith("tls://"):
+            rc, out, _ = _run(args, t=4); ok = (rc == 0 and bool(out.strip()))   # dig 已校验 RCODE/回答
+        elif addr.startswith("https://"):                                        # DoH: 发真实 wire query
+            import urllib.request
+            qid, wire = _dns_query()
+            req = urllib.request.Request(addr, data=wire,
+                headers={"content-type": "application/dns-message", "accept": "application/dns-message"})
+            with urllib.request.urlopen(req, timeout=3) as r:
+                ok = (getattr(r, "status", 200) == 200) and _dns_resp_ok(r.read(), qid)
+        elif addr.startswith("tls://"):                                          # DoT: TLS + DNS-over-TCP
+            import ssl, struct
             hp = addr.split("://", 1)[1]; host, _, port = hp.partition(":")
-            with socket.create_connection((host, int(port or 853)), timeout=3):
-                ok = True
+            qid, wire = _dns_query()
+            ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, int(port or 853)), timeout=3) as raw:
+                with ctx.wrap_socket(raw, server_hostname=host) as tls:
+                    tls.sendall(struct.pack(">H", len(wire)) + wire)
+                    head = _recvn(tls, 2)
+                    body = _recvn(tls, struct.unpack(">H", head)[0]) if len(head) == 2 else b""
+                    ok = _dns_resp_ok(body, qid)
         else:
             return (addr, None, "未知协议")
     except Exception as e:  # noqa: BLE001

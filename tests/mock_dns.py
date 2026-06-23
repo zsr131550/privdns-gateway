@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """极简 UDP DNS mock(仅供 tests/dns-policy-test.sh 当"上游"用):
-A 查询一律回一个固定 IP, 其它类型回 NOERROR 空应答。不依赖任何第三方库。
+A→固定 IP, AAAA→固定 IPv6, HTTPS(type65)→一条最小 SVCB 记录(都返回**非空**应答),
+其它类型回 NOERROR 空应答。不依赖任何第三方库。
+返回非空 AAAA/HTTPS 是有意为之: 这样"代理域名被 mosdns 置空"的断言才有意义
+(否则 mock 本身就空, 删掉 mosdns 抑制逻辑测试也会假阳性通过)。
 用法: mock_dns.py <listen_port> <answer_ip>
 """
 import socket
 import struct
 import sys
+
+ANSWER_AAAA = "2001:db8::1"
 
 
 def build_response(query, answer_ip):
@@ -22,13 +27,19 @@ def build_response(query, answer_ip):
     qtype = struct.unpack(">H", query[i:i + 2])[0]
     question = query[12:i + 4]
     flags = b"\x81\x80"                       # QR=1, RD=1, RA=1, RCODE=0(NOERROR)
+    ptr = b"\xc0\x0c"                         # name → 指回问题里的 qname
     if qtype == 1:                            # A
-        ancount = 1
-        answer = (b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4)
-                  + socket.inet_aton(answer_ip))
-    else:                                     # AAAA/HTTPS/其它: 空应答
-        ancount = 0
-        answer = b""
+        rdata = socket.inet_aton(answer_ip)
+    elif qtype == 28:                         # AAAA
+        rdata = socket.inet_pton(socket.AF_INET6, ANSWER_AAAA)
+    elif qtype == 65:                         # HTTPS/SVCB: SvcPriority=1 + TargetName=root(.)
+        rdata = struct.pack(">H", 1) + b"\x00"
+    else:                                     # 其它类型: 空应答
+        rdata = None
+    if rdata is None:
+        answer = b""; ancount = 0
+    else:
+        answer = ptr + struct.pack(">HHIH", qtype, 1, 60, len(rdata)) + rdata; ancount = 1
     header = qid + flags + struct.pack(">HHHH", 1, ancount, 0, 0)
     return header + question + answer
 

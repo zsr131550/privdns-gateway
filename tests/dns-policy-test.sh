@@ -66,10 +66,14 @@ echo "qq.com" > "$WORK/rules/geosite_cn.txt"
 : > "$WORK/rules/custom_direct.txt"
 
 # ── 渲染真实 config.yaml → 测试版(上游指 mock, 端口换高位, 去掉 DoT server 省证书)──
-render_conf(){   # $1 = 内网段
+MOCK_UP="{addr: \"udp://127.0.0.1:$MOCKP\"}"
+render_conf(){   # $1=内网段  $2=local 上游内联(默认=单 mock; 故障转移测试传 好+坏)
+  local local_ups="${2:-$MOCK_UP}"
+  # 按上游里的特征 IP 区分 remote(1.1.1.1)/local(223.5.5.5) 整行替换(兼容 concurrent: 前缀)。
   sed -e "s/__SERVER_IP__/$SERVER_IP/g" -e "s#__INTERNAL_CIDR__#$1#g" -e "s#__CERT_DIR__#$WORK#g" \
       "$ROOT/deploy/mosdns/config.yaml" \
-    | sed -e "s#args: { upstreams: \[.*\] }#args: { upstreams: [ {addr: \"udp://127.0.0.1:$MOCKP\"} ] }#" \
+    | sed -e "s#^\([[:space:]]*\)args: {.*1\.1\.1\.1.*}#\1args: { concurrent: 2, upstreams: [ $MOCK_UP ] }#" \
+          -e "s#^\([[:space:]]*\)args: {.*223\.5\.5\.5.*}#\1args: { concurrent: 2, upstreams: [ $local_ups ] }#" \
           -e "s#/etc/mosdns/rules/#$WORK/rules/#g" \
           -e "s#0.0.0.0:53#127.0.0.1:$DNSP#g" \
           -e "/- tag: dot_server/,\$d" \
@@ -95,19 +99,33 @@ ok(){ echo "[OK]   $1"; pass=$((pass+1)); }
 ko(){ echo "[FAIL] $1"; nfail=$((nfail+1)); }
 expect_eq(){ [[ "$2" == "$3" ]] && ok "$1 ($2)" || ko "$1: 期望「$3」实得「$2」"; }
 expect_empty(){ [[ -z "$2" ]] && ok "$1 (空)" || ko "$1: 期望空, 实得「$2」"; }
+expect_nonempty(){ [[ -n "$2" ]] && ok "$1 ($2)" || ko "$1: 期望非空, 实得空"; }
 
 # ── 4a. 内网来源(内网段=127.0.0.0/8, 故本机 dig 即"内网")──
+# 注意: mock 上游对 AAAA/HTTPS **会返回非空记录**, 所以"代理域名被置空"证明的是 mosdns 抑制逻辑(非 mock 巧合)。
 note "渲染(内网段=127.0.0.0/8)并起 mosdns…"
 render_conf "127.0.0.0/8"; start_mosdns
-expect_eq   "代理域名 A → 劫持到网关IP"        "$(q example.com A)"     "$SERVER_IP"
-expect_empty "代理域名 AAAA → 置空"            "$(q example.com AAAA)"
-expect_empty "代理域名 HTTPS(type65) → 置空"   "$(q example.com TYPE65)"
-expect_eq   "国内域名(qq.com) A → 直连走上游"  "$(q www.qq.com A)"      "$UPSTREAM_IP"
+expect_eq      "代理域名 A → 劫持到网关IP"            "$(q example.com A)"     "$SERVER_IP"
+expect_empty   "代理域名 AAAA → mosdns 置空(mock 本会回 AAAA)"   "$(q example.com AAAA)"
+expect_empty   "代理域名 HTTPS(65) → mosdns 置空"     "$(q example.com TYPE65)"
+expect_eq      "国内域名 A → 直连走上游"              "$(q www.qq.com A)"      "$UPSTREAM_IP"
+expect_nonempty "国内域名 AAAA → 不被置空(走上游)"    "$(q www.qq.com AAAA)"
 
 # ── 4b. 非内网来源(内网段不含 127, 故本机 dig 视为"外部")──
 note "渲染(内网段=10.200.0.0/16, 本机=外部来源)并重起 mosdns…"
 render_conf "10.200.0.0/16"; start_mosdns
-expect_eq   "外部来源: 代理域名 A 不劫持, 走上游" "$(q example.com A)"   "$UPSTREAM_IP"
+expect_eq      "外部来源: 代理域名 A 不劫持, 走上游"  "$(q example.com A)"     "$UPSTREAM_IP"
+
+# ── 4c. 上游故障转移(concurrent=2): local = [好 mock, 死端口], 连查多个不同国内子域都应成功 ──
+# (用不同子域绕开缓存; 若 concurrent 退回默认 1=随机选 1 个不转移, 约半数会命中死端口而失败)
+note "渲染(local=好+坏上游)验证一台上游挂掉仍可解析…"
+render_conf "127.0.0.0/8" "$MOCK_UP, {addr: \"udp://127.0.0.1:15999\"}"; start_mosdns
+down=0
+for i in $(seq 1 8); do
+  [[ "$(q "t$i.qq.com" A)" == "$UPSTREAM_IP" ]] || down=$((down+1))
+done
+[[ "$down" -eq 0 ]] && ok "上游故障转移: 坏上游在列时 8/8 国内查询仍成功" \
+  || ko "上游故障转移: $down/8 失败(concurrent 没生效 → 退回随机选 1 不转移?)"
 
 echo "────────────────────────────────────────"
 echo "通过 $pass, 失败 $nfail"

@@ -5,14 +5,17 @@ log:
 #   __INTERNAL_CIDR__ 内网卡来源段 (只有这个来源的查询才劫持/分流)
 #   __CERT_DIR__      DoT 证书目录 (含 fullchain.pem / privkey.pem)
 plugins:
+  # concurrent: 2 = 每次并发查"随机起点的 2 个上游", 先返回的有效结果胜、出错的被跳过
+  #   → 任一上游挂掉(如阿里 DoH 跨境 reset)查询仍成功。
+  #   ⚠️ mosdns 默认 concurrent=1 是"随机选 1 个、出错不换下一个", 多写上游并不会自动故障转移, 故必须显式设。
   - tag: remote_upstream
     type: forward
-    args: { upstreams: [ {addr: "https://1.1.1.1/dns-query"}, {addr: "udp://8.8.8.8:53"} ] }
+    args: { concurrent: 2, upstreams: [ {addr: "https://1.1.1.1/dns-query"}, {addr: "udp://8.8.8.8:53"} ] }
   - tag: local_upstream
     type: forward
     # 国内多厂商冗余: 阿里 DoH(防污染) + 阿里 UDP(兜底) + 腾讯 UDP(异厂商, 阿里抽风/限速时顶上)。
-    # 故障转移由 forward 插件按健康度处理; 想换/加用 bot『🌐 DNS 上游』。
-    args: { upstreams: [ {addr: "https://223.5.5.5/dns-query"}, {addr: "udp://223.5.5.5:53"}, {addr: "udp://119.29.29.29:53"} ] }
+    # 想换/加用 bot『🌐 DNS 上游』(会保留 concurrent: 2)。
+    args: { concurrent: 2, upstreams: [ {addr: "https://223.5.5.5/dns-query"}, {addr: "udp://223.5.5.5:53"}, {addr: "udp://119.29.29.29:53"} ] }
   - tag: geosite_cn
     type: domain_set
     args: { files: ["/etc/mosdns/rules/geosite_cn.txt","/etc/mosdns/rules/geosite_apple.txt","/etc/mosdns/rules/custom_direct.txt"] }
