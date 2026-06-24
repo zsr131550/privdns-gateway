@@ -2,6 +2,11 @@
 
 本项目无正式版本号,按日期记录主要变化;完整提交见 git 历史。
 
+## 2026-06-24 — 出口支持粘贴 Surge 的 ss 行
+
+- **「📤 出口管理 → 添加」除 `ss:// / vmess:// / trojan:// / vless://` 链接外,也认 Surge 代理行**:`名字 = ss, 服务器, 端口, encrypt-method=…, password="…", tfo=true, udp-relay=true`(`encrypt-method`→method、`tfo=true`→`tcp_fast_open`;SS2022 如 `2022-blake3-aes-128-gcm` OK;udp-relay 是 sing-box ss 出站默认行为)。其它类型仍用对应 URI。
+- 加 `tests/test-parse-links.py`(进 CI):Surge ss 行 / `ss://` SIP002 / 非法输入 三类断言。
+
 ## 2026-06-24 — 流媒体/服务解锁开关(WDA)
 
 - **bot『🌐 DNS 上游』新增解锁开关**:两个按钮在「🛬 解锁走落地出口」与「🔓 解锁走 WDA」之间整体切换。

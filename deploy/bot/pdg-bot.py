@@ -241,7 +241,10 @@ def parse_link(link):
         return _parse_trojan(link)
     if link.startswith("vless://"):
         return _parse_vless(link)
-    raise ValueError("只支持 ss:// / vmess:// / trojan:// / vless:// 链接")
+    if re.search(r"=\s*ss\s*,", link, re.I):          # Surge 代理行: 名字 = ss, 服务器, 端口, encrypt-method=…, password=…
+        return _parse_surge(link)
+    raise ValueError("只支持 ss:// / vmess:// / trojan:// / vless:// 链接, 或 Surge 的 ss 行"
+                     "(名字 = ss, 服务器, 端口, encrypt-method=…, password=…)")
 
 def _b64(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode("utf-8", "ignore")
@@ -262,6 +265,29 @@ def _parse_ss(link):
         head, hp = _b64(body).rsplit("@", 1); method, pw = head.split(":", 1); host, port = hp.rsplit(":", 1)
     return {"type": "shadowsocks", "tag": _tag(tag, host.strip("[]"), port), "server": host.strip("[]"),
             "server_port": int(port.split("/")[0]), "method": method, "password": pw}
+
+def _parse_surge(line):
+    """Surge 代理行(目前支持 ss): 名字 = ss, 服务器, 端口, encrypt-method=…, password="…", tfo=true, udp-relay=true"""
+    name, _, rest = line.partition("=")
+    parts = [p.strip() for p in rest.split(",")]
+    if not parts or parts[0].lower() != "ss":
+        raise ValueError("Surge 行暂只支持 ss(其它类型请用 ss:// / vmess:// / trojan:// / vless:// 链接)")
+    if len(parts) < 3:
+        raise ValueError("Surge ss 行格式: 名字 = ss, 服务器, 端口, encrypt-method=…, password=…")
+    server = parts[1].strip("[]"); port = int(parts[2].split("/")[0])
+    kv = {}
+    for p in parts[3:]:                               # key=value(password 里的 base64 可能含 = / +, 故只切第一个 =)
+        if "=" in p:
+            k, v = p.split("=", 1); kv[k.strip().lower()] = v.strip().strip('"').strip("'")
+    method = kv.get("encrypt-method") or kv.get("method")
+    pw = kv.get("password")
+    if not method or not pw:
+        raise ValueError("Surge ss 行缺 encrypt-method 或 password")
+    out = {"type": "shadowsocks", "tag": _tag(name.strip(), server, str(port)),
+           "server": server, "server_port": port, "method": method, "password": pw}
+    if kv.get("tfo", "").lower() in ("true", "1"):    # udp-relay: sing-box ss 出站默认就支持 UDP, 无需额外字段
+        out["tcp_fast_open"] = True
+    return out
 
 def _tls_block(server_name, insecure=False):
     b = {"enabled": True}

@@ -79,6 +79,9 @@ jobs:
       - name: "mosdns concurrent 迁移回归 (单上游=1/多上游=2/幂等)"
         run: bash tests/test-mosdns-concurrent.sh
 
+      - name: "parse_link 回归 (ss/Surge 行解析)"
+        run: python3 tests/test-parse-links.py
+
   functional:
     # 真功能测试: 下载钉死 SHA256 的 sing-box / mosdns, 真起一遍, 验证两层核心链路。
     runs-on: ubuntu-latest
