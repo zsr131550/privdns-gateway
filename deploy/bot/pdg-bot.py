@@ -93,6 +93,10 @@ MENU = {"inline_keyboard": [
     [{"text": "📱 客户端", "callback_data": "nav:client"}, {"text": "🛠 运维", "callback_data": "nav:ops"}],
 ]}
 BACK = {"inline_keyboard": [[{"text": "⬅️ 返回主菜单", "callback_data": "menu"}]]}
+OPS_BACK = {"inline_keyboard": [[{"text": "⬅️ 返回运维", "callback_data": "nav:ops"}],
+                               [{"text": "🏠 主菜单", "callback_data": "menu"}]]}
+DNS_BACK = {"inline_keyboard": [[{"text": "⬅️ 返回 DNS 上游", "callback_data": "dnsup"}],
+                               [{"text": "🏠 主菜单", "callback_data": "menu"}]]}
 
 def _nav(key):
     """二级子菜单 (标题, 键盘)。每个子菜单末尾自带「返回主菜单」。"""
@@ -960,10 +964,23 @@ def _esc(s):
 def _git(*args, t=60):
     return subprocess.run(["git", "-C", PDG_REPO, *args], capture_output=True, text=True, timeout=t)
 
+def _fetch_release_tags():
+    r = _git("fetch", "-q", "--tags", "origin", "main", t=120)
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout or "git fetch 失败").strip()
+    shallow = _git("rev-parse", "--is-shallow-repository")
+    if shallow.stdout.strip() == "true":
+        r = _git("fetch", "-q", "--unshallow", "--tags", "origin", "main", t=180)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout or "git fetch --unshallow 失败").strip()
+    return True, ""
+
 def update_check():
     """检查是否有更新的发布 tag(只跟 tag, 不拉 main 中间提交)。返回 (有更新?, 文本)。"""
     try:
-        _git("fetch", "-q", "--tags", "origin", "main")
+        ok, err = _fetch_release_tags()
+        if not ok:
+            return False, f"检查更新失败: {err}"
         cur = _git("describe", "--tags", "--always").stdout.strip()
         tags = _git("tag", "-l", "v*", "--sort=-v:refname").stdout.split()
     except Exception as e:  # noqa: BLE001
@@ -975,8 +992,13 @@ def update_check():
     tcommit = _git("rev-parse", tgt + "^{commit}").stdout.strip()
     if head == tcommit:
         return False, f"🟢 已是最新发布 <b>{tgt}</b>。"
-    if _git("merge-base", "--is-ancestor", "HEAD", tgt).returncode != 0:
+    mb = _git("merge-base", "--is-ancestor", "HEAD", tgt)
+    if mb.returncode == 0:
+        pass
+    elif mb.returncode == 1:
         return False, f"🟢 已是最新(当前 <code>{cur}</code> 不落后于最新发布 {tgt})。"
+    else:
+        return False, f"检查更新失败: merge-base 判断失败: {(mb.stderr or mb.stdout).strip()}"
     log = _git("log", "--oneline", "HEAD.." + tgt).stdout.strip()
     n = len(log.splitlines())
     return True, (f"🔄 有新发布 <b>{tgt}</b>(当前 <code>{cur}</code>,含 {n} 个提交):\n"
@@ -1670,27 +1692,27 @@ def handle_cb(chat, mid, data):
              {"inline_keyboard": [
                  [{"text": "🛬 解锁走落地出口", "callback_data": "wda:off"},
                   {"text": "🔓 解锁走 WDA", "callback_data": "wda:on"}],
-                 [{"text": "⬅️ 返回主菜单", "callback_data": "menu"}]]}); return
+                 [{"text": "⬅️ 返回运维", "callback_data": "nav:ops"}]]}); return
     if data in ("wda:on", "wda:off"):
         edit(chat, mid, "正在切换解锁模式…", None)
         ok, msg = set_wda_mode(data == "wda:on")
-        edit(chat, mid, msg if ok else ("❌ " + msg), MENU); return
+        edit(chat, mid, msg if ok else ("❌ " + msg), DNS_BACK); return
     if data == "tfo":
         on = _tfo_on(load())
         edit(chat, mid, f"🚀 <b>TCP Fast Open</b>\n当前: <b>{'开启' if on else '关闭'}</b>\n"
              "降低到落地的握手延迟; 需落地端也支持, 否则自动回落普通握手。",
              {"inline_keyboard": [[{"text": "开启", "callback_data": "tfo:on"}, {"text": "关闭", "callback_data": "tfo:off"}],
-                                  [{"text": "⬅️ 返回主菜单", "callback_data": "menu"}]]}); return
+                                  [{"text": "⬅️ 返回运维", "callback_data": "nav:ops"}]]}); return
     if data in ("tfo:on", "tfo:off"):
-        ok, msg = set_tfo(data == "tfo:on"); edit(chat, mid, msg if ok else ("❌ " + msg), MENU); return
+        ok, msg = set_tfo(data == "tfo:on"); edit(chat, mid, msg if ok else ("❌ " + msg), OPS_BACK); return
     if data == "restart":
         ok, msg = apply_sb(lambda c: None); sh(["systemctl", "restart", "mosdns"])
-        edit(chat, mid, "✅ 已重启 sing-box + mosdns" if ok else msg, MENU); return
+        edit(chat, mid, "✅ 已重启 sing-box + mosdns" if ok else msg, OPS_BACK); return
     if data == "updgeo":
         edit(chat, mid, "正在更新 geosite + 规则集…", None)
         r = sh(["/bin/bash", UPDATE_SCRIPT]); n = refresh_rulesets()
         edit(chat, mid, (f"✅ geosite 已更新; 规则集刷新 {n} 个" if r.returncode == 0
-                         else "geosite 更新失败:\n" + (r.stdout + r.stderr)[-300:]), MENU); return
+                         else "geosite 更新失败:\n" + (r.stdout + r.stderr)[-300:]), OPS_BACK); return
     if data.startswith("delx:"):
         tag = data[5:]
         def mod(c):

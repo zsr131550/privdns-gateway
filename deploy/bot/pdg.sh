@@ -24,6 +24,14 @@ _lock(){
   PDG_LOCKED=1
 }
 
+pdg_fetch_release_tags(){
+  local dir="${1:-$REPO_DIR}"
+  git -C "$dir" fetch -q --tags origin main || return 1
+  if [[ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+    git -C "$dir" fetch -q --unshallow --tags origin main || return 1
+  fi
+}
+
 cmd_status(){
   c_g "== 服务 =="
   for s in mosdns sing-box pdg-bot pdg-probe81; do
@@ -275,7 +283,7 @@ cmd_update(){
   need_root update
   command -v git >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; }
   if [[ "${1:-}" == "--dry-run" ]]; then
-    [[ -d "$REPO_DIR/.git" ]] && git -C "$REPO_DIR" fetch -q --tags origin main 2>/dev/null
+    [[ -d "$REPO_DIR/.git" ]] && pdg_fetch_release_tags "$REPO_DIR" 2>/dev/null
     local tgt; tgt=$(git -C "$REPO_DIR" tag -l 'v*' --sort=-v:refname 2>/dev/null | head -1)
     echo "当前: $(git -C "$REPO_DIR" describe --tags --always 2>/dev/null)   最新发布: ${tgt:-(无 tag)}"
     [[ -n "$tgt" ]] && { echo "待更新提交(HEAD..$tgt):"; git -C "$REPO_DIR" log --oneline "HEAD..$tgt" 2>/dev/null || echo "  (已是最新或无法比较)"; }
@@ -285,7 +293,9 @@ cmd_update(){
   c_g "更新前留快照…"; cmd_snapshot >/dev/null 2>&1 || true
   c_g "拉取最新发布 tag…"
   [[ -d "$REPO_DIR/.git" ]] || { rm -rf "$REPO_DIR"; git clone -q "$REPO_URL" "$REPO_DIR"; }
-  git -C "$REPO_DIR" fetch -q --tags origin main
+  if ! pdg_fetch_release_tags "$REPO_DIR"; then
+    c_y "拉取发布 tag 失败, 中止更新。"; return 1
+  fi
   local tgt; tgt=$(git -C "$REPO_DIR" tag -l 'v*' --sort=-v:refname | head -1)
   if [[ -z "$tgt" ]]; then
     c_y "仓库没有发布 tag(v*), 中止更新。"; return 1

@@ -20,6 +20,22 @@ c_g(){ echo -e "\033[1;32m[*]\033[0m $*"; }
 c_y(){ echo -e "\033[1;33m[!]\033[0m $*"; }
 die(){ echo -e "\033[1;31m[x]\033[0m $*" >&2; exit 1; }
 
+pdg_checkout_latest_tag(){
+  local dir="$1" tag cur target
+  git -C "$dir" fetch -q --tags origin main
+  if [[ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+    git -C "$dir" fetch -q --unshallow --tags origin main
+  fi
+  tag=$(git -C "$dir" tag -l 'v*' --sort=-v:refname | head -1)
+  [[ -n "$tag" ]] || die "仓库没有发布 tag(v*), 中止安装。"
+  cur=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
+  target=$(git -C "$dir" rev-parse "$tag^{commit}" 2>/dev/null || true)
+  if [[ "$cur" != "$target" ]]; then
+    git -C "$dir" checkout -q "$tag"
+  fi
+  echo "$tag"
+}
+
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo ./install.sh  (或 curl ... | sudo bash)"
 command -v apt-get >/dev/null || die "目前仅支持 Debian/Ubuntu (apt)"
 case "$(dpkg --print-architecture)" in
@@ -33,13 +49,25 @@ if [[ ! -f "$SRC/deploy/mosdns/config.yaml" ]]; then
   c_g "未在仓库目录内运行 → 自动拉取 privdns-gateway…"
   command -v git >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; }
   DEST=/opt/privdns-gateway
-  if [[ -d "$DEST/.git" ]]; then git -C "$DEST" pull -q --ff-only || true
-  else rm -rf "$DEST"; git clone -q --depth 1 "$REPO_URL" "$DEST"; fi
+  if [[ ! -d "$DEST/.git" ]]; then
+    rm -rf "$DEST"; git clone -q "$REPO_URL" "$DEST"
+  fi
+  TAG=$(pdg_checkout_latest_tag "$DEST")
+  c_g "使用最新发布 $TAG"
   # 有可用控制终端就把 stdin 接回它(交互), 否则直接重跑(靠 PDG_* 环境变量非交互)
+  export PDG_TAG_BOOTSTRAPPED=1
   if { true < /dev/tty; } 2>/dev/null; then exec bash "$DEST/install.sh" "$@" < /dev/tty
   else exec bash "$DEST/install.sh" "$@"; fi
 fi
 REPO_DIR="$SRC"
+if [[ -d "$REPO_DIR/.git" && "${PDG_TAG_BOOTSTRAPPED:-}" != "1" ]]; then
+  command -v git >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; }
+  TAG=$(pdg_checkout_latest_tag "$REPO_DIR")
+  export PDG_TAG_BOOTSTRAPPED=1
+  c_g "使用最新发布 $TAG"
+  if { true < /dev/tty; } 2>/dev/null; then exec bash "$REPO_DIR/install.sh" "$@" < /dev/tty
+  else exec bash "$REPO_DIR/install.sh" "$@"; fi
+fi
 
 # ── 版本 + 钉死 SHA256(供应链校验)──
 # shellcheck source=lib/versions.sh

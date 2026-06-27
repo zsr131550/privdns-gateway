@@ -23,11 +23,15 @@
 curl -fsSL https://raw.githubusercontent.com/misaka-cpu/privdns-gateway/main/install.sh | sudo bash
 ```
 
+入口脚本只负责自举,实际安装会自动切到最新 `v*` 发布 tag,不安装 main 上未发布的中间提交。
+
 或克隆后运行:
 
 ```bash
 git clone https://github.com/misaka-cpu/privdns-gateway.git
 cd privdns-gateway
+git fetch --tags
+git checkout "$(git tag -l 'v*' --sort=-v:refname | head -1)"
 sudo ./install.sh
 ```
 
@@ -108,9 +112,9 @@ sudo PDG_NONINTERACTIVE=1 \
 ### 看到 "入站字段已废弃 / 将在 1.12.0 中被移除" 怎么办
 
 **说明你的 sing-box 版本不对(太旧),不是我们锁的 1.12.x。**
-本仓库 install.sh 装的是 **1.12.9**,实测 `sing-box check` 零告警——这条 "将在 1.12.0 中移除" 是 **1.11.x** 才会打的旧提示。
+本仓库 install.sh 装的是项目锁定的 **1.12.x**(当前 **1.12.25**),实测 `sing-box check` 零告警——这条 "将在 1.12.0 中移除" 是 **1.11.x** 才会打的旧提示。
 
-`sing-box version` 确认一下;如果不是 1.12.x,重跑 install.sh(会自动下 1.12.9)或手动换成 1.12.x。
+`sing-box version` 确认一下;如果不是 1.12.x,重跑 install.sh(会自动下项目锁定版)或手动换成 1.12.x。
 
 > 本项目**锁 1.12.x** 的原因:1.13 移除了 `sniff_override_destination`,而它的新写法(`action: sniff`)**不覆盖目标地址**、会导致流量回环。
 > 所以**别升 1.13+,也别用比 1.12 旧的版本**。

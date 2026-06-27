@@ -43,11 +43,16 @@ sing-box 嗅探 SNI/Host 后再决定走哪个落地。
 curl -fsSL https://raw.githubusercontent.com/misaka-cpu/privdns-gateway/main/install.sh | sudo bash
 ```
 
+入口脚本只负责自举,实际安装会自动切到最新 `v*` 发布 tag,不安装 main 上未发布的中间提交。
+
 或克隆后运行(便于先看代码):
 
 ```bash
 git clone https://github.com/misaka-cpu/privdns-gateway.git
-cd privdns-gateway && sudo ./install.sh
+cd privdns-gateway
+git fetch --tags
+git checkout "$(git tag -l 'v*' --sort=-v:refname | head -1)"
+sudo ./install.sh
 ```
 
 脚本会装好 mosdns、sing-box(1.12)、管理 bot、防火墙和证书,自动识别公网 IP 和内网卡段,再交互填 DoT 域名(**bot token 可留空**,装完随时 `sudo pdg-set-token` 再设并启用)。
