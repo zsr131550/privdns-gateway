@@ -11,7 +11,7 @@ UI 原地编辑消息(editMessageText), 不刷屏。改 sing-box 前备份, chec
 注: 模块可被 import (供定时任务调用 refresh_rulesets), 此时无需 token。
 """
 from __future__ import annotations
-import base64, hashlib, http.client, io, json, os, re, shutil, socket, subprocess, tarfile, tempfile, threading, time, uuid
+import base64, hashlib, http.client, io, json, os, plistlib, re, shutil, socket, subprocess, tarfile, tempfile, threading, time, uuid
 import urllib.parse, urllib.request, urllib.error
 from collections import Counter
 
@@ -1348,14 +1348,22 @@ def set_dot_domain(domain):
                   "• iOS: 重新生成一次「📱 iOS 描述文件」即可(自动用新域名)")
 
 # ── iOS 描述文件 ──
-def _ios_profile():
+def _ios_profile(ssids=()):
+    """ssids 非空时在 OnDemandRules 最前插一条「命中这些 SSID 的 Wi-Fi 强制直连(不启用 DoT)」;
+    其余 Wi-Fi/蜂窝仍按模板里的 :81 探测判定。用 plistlib 插入, SSID 含 &<> 等也不会破 XML。"""
     if not os.path.exists(IOS_TMPL):
         raise FileNotFoundError("缺少模板 " + IOS_TMPL)
     t = open(IOS_TMPL).read()
-    return (t.replace("__DOT_HOST__", _dot_host())
-             .replace("__JP_IP__", _server_ip())
-             .replace("__UUID1__", str(uuid.uuid4()).upper())
-             .replace("__UUID2__", str(uuid.uuid4()).upper())).encode()
+    raw = (t.replace("__DOT_HOST__", _dot_host())
+            .replace("__JP_IP__", _server_ip())
+            .replace("__UUID1__", str(uuid.uuid4()).upper())
+            .replace("__UUID2__", str(uuid.uuid4()).upper())).encode()
+    if not ssids:
+        return raw
+    p = plistlib.loads(raw)
+    p["PayloadContent"][0]["OnDemandRules"].insert(
+        0, {"InterfaceTypeMatch": "WiFi", "SSIDMatch": list(ssids), "Action": "Disconnect"})
+    return plistlib.dumps(p)
 
 # ── 配置备份 / 恢复 ──
 BACKUP_FILES = [SB, MOSDNS_CONF, MOSDNS_DIRECT, RS_META]
@@ -1712,12 +1720,22 @@ def handle_cb(chat, mid, data):
     if data == "setfinal":
         edit(chat, mid, "「其余国际」默认走哪个出口/组：", kb_pick("fin", exit_tags(load()), EXIT_BACK)); return
     if data == "ios":
+        state[chat] = "ios_ssid"
+        edit(chat, mid, "📱 <b>生成 iOS 描述文件</b>\n"
+             "Wi-Fi/蜂窝下是否启用私密 DNS 都由 <code>:81</code> 探测自动判定(网络能走到网关才启用)。\n"
+             "若有想<b>强制直连</b>的 Wi-Fi(如公司网、探测误判的酒店网), 发它的名字(SSID, 多个则每行一个)再生成;"
+             "不需要就点「直接生成」。/cancel 取消。",
+             {"inline_keyboard": [[{"text": "⏭ 直接生成", "callback_data": "iosgen"}],
+                                  [{"text": "⬅️ 返回客户端", "callback_data": "nav:client"}],
+                                  [{"text": "🏠 主菜单", "callback_data": "menu"}]]}); return
+    if data == "iosgen":
+        state.pop(chat, None)
         edit(chat, mid, "正在生成 iOS 描述文件…", BACK)
         try:
             send_document(chat, "PrivDNS-Gateway.mobileconfig", _ios_profile(),
                           f"📱 iOS/iPadOS 私密DNS 描述文件\nDoT: {_dot_host()}\n"
                           "装法: 存到「文件」App → 点开 → 设置→通用→「已下载描述文件」→ 安装。\n"
-                          "蜂窝下靠服务器 :81 探测激活, 安装时已自动配好。")
+                          "Wi-Fi/蜂窝均靠服务器 :81 探测激活, 安装时已自动配好。")
             edit(chat, mid, "✅ 描述文件已发送(见上一条)。", MENU)
         except Exception as e:  # noqa: BLE001
             edit(chat, mid, f"生成失败: {e}", MENU)
@@ -1900,6 +1918,17 @@ def handle_text(chat, text):
         name = act.split(":", 1)[1]
         ok, msg = set_ruleset_label(name, "" if text.strip() == "-" else text)
         send_plain(chat, msg if ok else ("❌ " + msg)); return
+    if act == "ios_ssid":
+        ssids = [] if text.strip() == "-" else [l.strip()[:32] for l in text.splitlines() if l.strip()][:8]
+        try:
+            send_document(chat, "PrivDNS-Gateway.mobileconfig", _ios_profile(ssids),
+                          f"📱 iOS/iPadOS 私密DNS 描述文件\nDoT: {_dot_host()}\n"
+                          + (("强制直连 Wi-Fi: " + ", ".join(ssids) + "\n") if ssids else "")
+                          + "装法: 存到「文件」App → 点开 → 设置→通用→「已下载描述文件」→ 安装。")
+            send_plain(chat, "✅ 已生成" + (f", {len(ssids)} 个 Wi-Fi 设为强制直连" if ssids else ""))
+        except Exception as e:  # noqa: BLE001
+            send_plain(chat, f"生成失败: {e}")
+        return
     if act == "set_dns":
         p = text.split()
         if len(p) < 2:
